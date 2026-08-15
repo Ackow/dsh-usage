@@ -1,84 +1,95 @@
-# @dshd/dsh-usage — 用量面板
+# dsh-usage
 
-> DeepSeek Harness 用量插件（独立仓库 / npm 包）。配合 [DSH Desktop](https://github.com/Ackow/dsh-desktop) 使用。
+![dsh-usage](assets/social-preview.png)
 
-dsh 插件（host + client hybrid）：在侧栏**设置按钮上方**注入「用量」按钮，点开模态面板查看
-**供应商 API 余额 · token 用量与命中率 · 成本折线图 · GitHub 样式热力图 · 历史明细**。
-面板为单页卡片流（每模块独立卡片、内容列居中展开）；成本为**估算值**，统一以 **USD** 显示。
+<p align="center">
+  <strong>简体中文</strong> | <a href="README.en.md">English</a>
+</p>
 
-样式贴合 dsh 原生：使用 `--dsw-alias-*` 主题 token（运行时由 dsh theme 注入，带回退色），
-面板/按钮/胶囊均镜像 dsh 原生组件形态。
+<p align="center">
+  <strong>把 DeepSeek Harness 的 token 账单摊开在侧栏。余额、命中率、成本曲线、热力图，一个「用量」按钮全看完。</strong><br>
+  成本是估算的，命中的是真实缓存，欠的款供应商比你先知道。
+</p>
 
-## 结构
+![用量面板总览：供应商余额 / 用量与命中率 / 折线图 / 热力图 / 历史明细，单页卡片流](assets/screenshot.png)
 
-```
-package.json        # @dshd/dsh-usage；dsh.bundle（host）+ dsh.client（web）
-cordis.patch.yml    # bundle 层：insert dshd-usage host 插件
-host.js             # host：/dsh-usage/balance|sessions|session|pricing|history 路由（同源，无 CORS）
-client.js           # client：侧栏「用量」按钮（order 70）+ 单页卡片面板 + 会话下拉/分页/CSV
-public/usage.svg    # 「用量」按钮图标源文件（运行时内嵌 path）
-docs/usage-panel-design.md  # 设计文档
-```
+`dsh-usage` 在 dsh web 侧栏**设置按钮上方**注入「用量」按钮，点开是一个单页模态面板。所有 token 用量从 dsh 会话日志（内存活跃 + 磁盘持久化，zstd 解码）解析；成本按请求时刻套用官方峰谷价目估算；凭据只在 host 侧解析，不出本机。
+
+## 面板五块
+
+### 供应商余额
+
+![供应商余额：DeepSeek / OpenRouter 切换，刷新即查](assets/balance.png)
+
+支持 **DeepSeek**（`DEEPSEEK_API_KEY`）与 **OpenRouter**（`OPENROUTER_API_KEY`），凭据经 dsh credentials 服务解析，key 不进浏览器。
+
+### 用量与命中率
+
+![用量与命中率：计费输入 / 命中率 / 成本，会话下拉切换全部或单个](assets/usage-hitrate.png)
+
+标题行可切换**全部会话 / 单个会话**（下拉显示会话标题）。命中率为**输入侧缓存命中率**。
+
+### 折线图
+
+![token / 成本双视图折线图：最近 14 天按天聚合，悬浮看每日明细](assets/chart.png)
+
+最近 14 天按天聚合，**Token / 成本**双视图，悬浮显示当日三桶 token 与成本估算。
+
+### 热力图
+
+![时间 / 会话双模式热力图，GitHub 贡献绿阶](assets/heatmap.png)
+
+**时间模式** = 最近 13 周每日；**会话模式** = 每个会话每轮。GitHub 官方 4 档绿阶。
+
+### 历史明细
+
+![历史明细：分页 + CSV 导出，含会话 / 模型 / 成本](assets/history.png)
+
+全量明细分页（每页 15 行、限高内部滚动、悬浮高亮），一键导出 CSV（带 BOM，Excel 直接打开）。
+
+## 数据口径
+
+- **用量来源**：`assistant/chunk`(usage) 与 `assistant/message` 事件；同一 `(turn, step)` 替换不累加
+- **命中率** = `cacheRead / (uncachedInput + cacheRead + cacheWrite)`（输入侧缓存命中率）
+- **成本** = 未命中输入×miss + 命中×hit + 输出×out；按请求时刻套用官方峰谷价（DeepSeek 2026-08-17 起高峰 9:00–12:00、14:00–18:00），并**定期在线同步官方价格页**（失败回退内置价目）
+- **成本为估算值**，非精确计费金额，统一以 USD 显示
 
 ## 安装
 
-```bash
+```sh
 dsh plugin --profile web add @dshd/dsh-usage
-dsh --profile web        # 重启生效
+# 重启 dsh web 后，侧栏设置按钮上方出现「用量」按钮
 ```
 
-## 开发安装（本地目录）
+## 开发
 
-```bash
-# 复制到 profile 的 node_modules 并注册 bundle
+```sh
+# 本地目录安装（跳过 npm）
 mkdir -p ~/.dsh/profiles/web/node_modules/@dshd/dsh-usage
 cp package.json host.js client.js cordis.patch.yml ~/.dsh/profiles/web/node_modules/@dshd/dsh-usage/
-# 在 ~/.dsh/profiles/web/package.json 加：
-#   "dependencies": { "@dshd/dsh-usage": "0.1.0" }
-#   "dsh.profile.bundles": [..., "@dshd/dsh-usage"]
+# 在 ~/.dsh/profiles/web/package.json 的 dependencies 与 dsh.profile.bundles 加入 @dshd/dsh-usage
+# 修改后重新 cp，重启 dsh web 生效（dsh plugin list 不会显示本地目录安装，属正常）
 ```
 
-修改 host.js / client.js 后重新 `cp`，重启 dsh web 生效（`dsh plugin list` 不会显示本地目录安装，属正常）。
+## 配置
+
+| 项 | 说明 | 默认 |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | DeepSeek 余额凭据（credentials 服务或环境变量） | — |
+| `OPENROUTER_API_KEY` | OpenRouter 余额凭据 | — |
+| `cnyPerUsd` | USD 换算汇率 | `6.76` |
+| `pricing` | 单价覆盖（可带 `schedules` 峰谷段） | 内置官方刊例价 |
 
 ## 发布 npm
 
-```bash
+```sh
 npm login
-npm version patch            # bump 版本
-npm publish                  # 发布到公共 npm（需 npm 账号）
+npm version patch
+npm publish
 ```
 
-发布后 DSH Desktop 的插件市场可通过 `dsh plugin add @dshd/dsh-usage` 安装（PluginManager 自动做 bundle/client 激活）。GitHub 仓库请打 `dsh-plugin` / `deepseek-harness` topic 以便进入插件市场发现层。
+GitHub 仓库请打 `dsh-plugin` / `deepseek-harness` topic，以便进入 [DSH Desktop 插件市场](https://github.com/Ackow/dsh-desktop) 的发现层。
 
-## 撤销
+## 免责声明
 
-```bash
-# 1) 从 package.json 的 dependencies + dsh.profile.bundles 移除 @dshd/dsh-usage
-# 2) 删除目录
-rm -rf ~/.dsh/profiles/web/node_modules/@dshd/dsh-usage
-# 3) 重启 dsh web
-```
-
-## 数据通道（host → client）
-
-| 路由 | 说明 | 状态 |
-|---|---|---|
-| `/dsh-usage/balance` | DeepSeek 余额（凭据 host 解析，key 不进浏览器） | ✅ 真实 |
-| `/dsh-usage/sessions` | 会话枚举（标题 / id / 事件数 / 最后活动 / 用量轮次），合并**内存活跃 + 磁盘持久化**（`session-persistence-jsonl` 服务，zstd 日志解码），按最后活动降序 | ✅ 真实 |
-| `/dsh-usage/session` | 用量折叠（token 四桶 / 命中率 / 成本 / 逐轮）：`?sessionId=X` 单会话（内存→持久化回退）；无参 = 全部汇总 | ✅ 真实 |
-| `/dsh-usage/pricing` | 价格表 + 汇率（cnyPerUsd）+ 估算标记 | ✅ 内置刊例价快照 |
-| `/dsh-usage/history` | 历史明细：`?sessionId=X` 单会话；无参 = 全部汇总 | ✅ 真实 |
-
-命中率 = `cacheRead / (uncachedInput + cacheRead + cacheWrite)`（输入侧缓存命中率，DeepSeek 口径）。
-成本 = 未命中输入×miss价 + 命中×hit价 + 输出×out价（host 以 CNY 估算，client 按 cnyPerUsd 换算统一显示 USD）。
-面板「用量与命中率」标题行有会话下拉（**显示会话标题**，hover 看 id）：全部会话 / 各会话，折线图·热力图·历史跟随同一选择。
-折线图按天聚合（最近 14 天，cc-switch 风格），悬浮显示每日明细；历史明细分页（每页 15 行，限高内部滚动）。
-
-## 待办（v2）
-
-- 供应商 adapter 扩展（OpenRouter / OpenAI 等公开余额端点）
-- 价格表在线同步（官方价目页）与用户覆盖 pricing.json
-- 峰谷时段计价（deepseek-billing 已有实现，可移植）
-- 全部汇总的持久化会话扫描上限（现为 50 个）改为分页/后台渐进
-
-设计文档见 `docs/usage-panel-design.md`。
+成本为按官方刊例价与请求时刻计算的**估算值**，可能因价格变动、峰谷时段或计费口径差异与真实账单不一致。本插件与 DeepSeek 及任何供应商无关联；不保存凭据、不上传数据，全部计算在本机完成。
