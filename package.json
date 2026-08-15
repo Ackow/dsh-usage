@@ -1,0 +1,40 @@
+{
+  "name": "@dshd/dsh-usage",
+  "version": "0.1.0",
+  "description": "DSH 用量面板：供应商 API 余额 · token 用量 · 缓存命中率 · 成本折线图 · GitHub 样式热力图（成本为估算值，USD/CNY 可切换）",
+  "type": "module",
+  "main": "host.js",
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "host.js",
+    "client.js",
+    "cordis.patch.yml"
+  ],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "usage",
+    "balance",
+    "token"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime"
+      ],
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

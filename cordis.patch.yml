@@ -1,0 +1,7 @@
+# dshd-usage bundle layer: mount the host plugin (host.js via the package root
+# export). The client half (sidebar.footer.action 「用量」按钮 + 面板) loads
+# automatically through package.json's dsh.client declaration when the package
+# is in dsh.profile.bundles.
+- insert:
+    - id: dshd-usage
+      name: '@dshd/dsh-usage'
