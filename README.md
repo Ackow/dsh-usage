@@ -80,16 +80,6 @@ cp package.json host.js client.js cordis.patch.yml ~/.dsh/profiles/web/node_modu
 | `cnyPerUsd` | USD 换算汇率 | `6.76` |
 | `pricing` | 单价覆盖（可带 `schedules` 峰谷段） | 内置官方刊例价 |
 
-## 发布 npm
+## License
 
-```sh
-npm login
-npm version patch
-npm publish
-```
-
-GitHub 仓库请打 `dsh-plugin` / `deepseek-harness` topic，以便进入 [DSH Desktop 插件市场](https://github.com/Ackow/dsh-desktop) 的发现层。
-
-## 免责声明
-
-成本为按官方刊例价与请求时刻计算的**估算值**，可能因价格变动、峰谷时段或计费口径差异与真实账单不一致。本插件与 DeepSeek 及任何供应商无关联；不保存凭据、不上传数据，全部计算在本机完成。
+[MIT](LICENSE)。`@dshd/dsh-usage` 与 DeepSeek 及任何供应商无关联；不保存凭据、不上传数据，全部计算在本机完成。成本为按官方刊例价与请求时刻计算的**估算值**，可能因价格变动、峰谷时段或计费口径差异与真实账单不一致。

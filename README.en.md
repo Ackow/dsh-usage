@@ -65,6 +65,6 @@ dsh plugin --profile web add @dshd/dsh-usage
 | `cnyPerUsd` | USD conversion rate | `6.76` |
 | `pricing` | per-model price override (may carry `schedules`) | built-in official list |
 
-## Disclaimer
+## License
 
-Costs are **estimates** computed from the official list price and request time; they may differ from the real bill due to price changes, peak windows, or billing semantics. This plugin is not affiliated with DeepSeek or any provider; it stores no credentials and uploads nothing — all computation happens locally.
+[MIT](LICENSE). Not affiliated with DeepSeek or any provider; no credentials stored, nothing uploaded — all computation happens locally. Costs are **estimates** computed from the official list price and request time; they may differ from the real bill due to price changes, peak windows, or billing semantics.
