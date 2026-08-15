@@ -431,10 +431,13 @@ export function apply(ctx, config) {
     return
   }
 
-  // ---- 持久化会话访问（session-persistence-jsonl 服务，可选） ----
+  // ---- 持久化会话访问（sessionPersistence 服务，可选） ----
   // 并发读取 + 单条超时，避免大量会话阻塞；不做总数封顶。
+  // 服务名在 dsh 版本间有差异：`sessionPersistence`（当前）与
+  // `session-persistence-jsonl`（旧版），两者都试。
   const PERSISTED_CONCURRENCY = 8
   const PERSISTED_TIMEOUT_MS = 5000
+  const persistenceService = () => ctx.get?.('sessionPersistence') ?? ctx.get?.('session-persistence-jsonl')
 
   function liveSessions() {
     try {
@@ -446,7 +449,7 @@ export function apply(ctx, config) {
 
   async function persistedHeaders() {
     try {
-      const p = ctx.get?.('session-persistence-jsonl')
+      const p = persistenceService()
       if (!p || typeof p.list !== 'function') return []
       return (await p.list()) || []
     } catch (e) { warn('持久化会话枚举失败：' + (e?.message || e)); return [] }
@@ -455,7 +458,7 @@ export function apply(ctx, config) {
   /** 读取一个持久化会话为 { id, events }；不存在/失败/超时返回 null。 */
   async function readPersistedSession(id) {
     try {
-      const p = ctx.get?.('session-persistence-jsonl')
+      const p = persistenceService()
       if (!p || typeof p.readRaw !== 'function') return null
       const res = await Promise.race([
         p.readRaw(id),

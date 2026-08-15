@@ -244,11 +244,17 @@ window.__ModuleLoader__.load({
     }
     function UsageTab(props) {
       var [data, setData] = useState(null)
+      var [page, setPage] = useState(1)
       function load() {
         fetchJson(sessionUrl('/dsh-usage/session', props.sessionId)).then(function (d) { setData(d) })
       }
       useEffect(function () { load() }, [props.sessionId])
+      useEffect(function () { setPage(1) }, [props.sessionId])
       var d = data && !data.noSession ? data : null
+      var rounds = (d && d.rounds) || []
+      var pages = Math.max(1, Math.ceil(rounds.length / USAGE_PAGE))
+      var cur = Math.min(page, pages)
+      var pageRounds = rounds.slice((cur - 1) * USAGE_PAGE, cur * USAGE_PAGE)
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
         el('div', { key: 'hd', style: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' } }, [
           el('span', { key: 't', style: { fontWeight: 600, fontSize: '13px', color: INK, flex: '1 1 auto' } }, '用量与命中率'),
@@ -274,7 +280,7 @@ window.__ModuleLoader__.load({
                 el('button', { key: 'r', type: 'button', style: BTN, onClick: load }, '重新统计'),
               ]),
               el('div', { key: 'rows', style: { display: 'flex', flexDirection: 'column', gap: '6px' } },
-                d.rounds.map(function (r, i) {
+                pageRounds.map(function (r, i) {
                   return el('div', { key: i, style: { display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px' } }, [
                     el('span', { key: 'm', style: { flex: '1 1 auto', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, r.model || '?'),
                     el('span', { key: 'u', style: MUTED2 }, '入 ' + fmtTokens(r.uncachedInput)),
@@ -283,11 +289,16 @@ window.__ModuleLoader__.load({
                     el('span', { key: 'co', style: { color: ACCENT } }, fmtMoney(r.costCny, props.cnyPerUsd)),
                   ])
                 })),
+              pages > 1 ? el('div', { key: 'pg', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' } }, [
+                el('button', { key: 'prev', type: 'button', style: PAGE_BTN, disabled: cur <= 1, onClick: function () { setPage(cur - 1) } }, '上一页'),
+                el('span', { key: 'info', style: MUTED2 }, '第 ' + cur + ' / ' + pages + ' 页 · 共 ' + rounds.length + ' 轮'),
+                el('button', { key: 'next', type: 'button', style: PAGE_BTN, disabled: cur >= pages, onClick: function () { setPage(cur + 1) } }, '下一页'),
+              ]) : null,
             ],
       ])
     }
 
-    // 折线图（cc-switch 风格：最近 14 天按天聚合，悬浮显示每日明细；Token / 成本双视图）
+    // 折线图（仅显示当天：按小时聚合，平滑曲线；Token / 成本双视图）
     function ChartTab(props) {
       var [data, setData] = useState(null)
       var [view, setView] = useState('token')   // token | cost
@@ -299,41 +310,51 @@ window.__ModuleLoader__.load({
       useEffect(function () { setHover(-1) }, [props.sessionId, view])
       var d = data && !data.noSession ? data : null
       var rounds = (d && d.rounds) || []
-      var W = 620, H = 200, PAD = 28, N = 14
+      var W = 620, H = 200, PAD = 28, N = 24
 
-      // 按天聚合最近 N 天（与热力图同一时间窗）
-      var days = []
-      var today = new Date(); today.setHours(0, 0, 0, 0)
-      for (var i = N - 1; i >= 0; i--) {
-        var day = new Date(today.getTime() - i * 86400000)
-        var key = day.getFullYear() + '-' + String(day.getMonth() + 1).padStart(2, '0') + '-' + String(day.getDate()).padStart(2, '0')
-        days.push({ key: key, label: String(day.getMonth() + 1) + '/' + String(day.getDate()), uncachedInput: 0, cacheRead: 0, output: 0, costCny: 0 })
+      // 仅聚合当天数据，按小时（0–23）分桶
+      var hours = []
+      var now = new Date()
+      var todayKey = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0')
+      for (var h = 0; h < N; h++) {
+        hours.push({ hour: h, label: String(h).padStart(2, '0') + ':00', uncachedInput: 0, cacheRead: 0, output: 0, costCny: 0 })
       }
-      var dayMap = {}
-      days.forEach(function (x) { dayMap[x.key] = x })
       rounds.forEach(function (r) {
         if (!r.time) return
         var dt = new Date(r.time)
         var k = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0')
-        var day = dayMap[k]
-        if (!day) return
-        day.uncachedInput += r.uncachedInput || 0
-        day.cacheRead += r.cacheRead || 0
-        day.output += r.output || 0
-        day.costCny += r.costCny || 0
+        if (k !== todayKey) return
+        var cell = hours[dt.getHours()]
+        if (!cell) return
+        cell.uncachedInput += r.uncachedInput || 0
+        cell.cacheRead += r.cacheRead || 0
+        cell.output += r.output || 0
+        cell.costCny += r.costCny || 0
       })
 
       var max = 1
       if (view === 'cost') {
-        days.forEach(function (x) { max = Math.max(max, x.costCny) })
+        hours.forEach(function (x) { max = Math.max(max, x.costCny) })
       } else {
-        days.forEach(function (x) { max = Math.max(max, x.uncachedInput, x.cacheRead, x.output) })
+        hours.forEach(function (x) { max = Math.max(max, x.uncachedInput, x.cacheRead, x.output) })
       }
       function xAt(i) { return PAD + (i / (N - 1)) * (W - PAD * 2) }
       function yAt(v) { return H - PAD - (v / max) * (H - PAD * 2) }
+      // 平滑曲线：Catmull-Rom 样条转三次贝塞尔
+      function smoothLine(points) {
+        if (points.length < 2) return ''
+        var d = 'M ' + points[0][0].toFixed(1) + ' ' + points[0][1].toFixed(1)
+        for (var i = 0; i < points.length - 1; i++) {
+          var p0 = points[Math.max(0, i - 1)], p1 = points[i], p2 = points[i + 1], p3 = points[Math.min(points.length - 1, i + 2)]
+          var c1x = p1[0] + (p2[0] - p0[0]) / 6, c1y = p1[1] + (p2[1] - p0[1]) / 6
+          var c2x = p2[0] - (p3[0] - p1[0]) / 6, c2y = p2[1] - (p3[1] - p1[1]) / 6
+          d += ' C ' + c1x.toFixed(1) + ' ' + c1y.toFixed(1) + ' ' + c2x.toFixed(1) + ' ' + c2y.toFixed(1) + ' ' + p2[0].toFixed(1) + ' ' + p2[1].toFixed(1)
+        }
+        return d
+      }
       function line(key, color) {
-        var pts = days.map(function (x, i) { return xAt(i).toFixed(1) + ',' + yAt(x[key]).toFixed(1) }).join(' ')
-        return el('polyline', { key: key, points: pts, fill: 'none', stroke: color, strokeWidth: 1.5 })
+        var pts = hours.map(function (x, i) { return [xAt(i), yAt(x[key])] })
+        return el('path', { key: key, d: smoothLine(pts), fill: 'none', stroke: color, strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })
       }
       function onMove(e) {
         var rect = e.currentTarget.getBoundingClientRect()
@@ -344,11 +365,12 @@ window.__ModuleLoader__.load({
         if (idx > N - 1) idx = N - 1
         setHover(idx)
       }
-      var day = hover >= 0 ? days[hover] : null
+      var cell = hover >= 0 ? hours[hover] : null
       var yAxisLabel = view === 'cost' ? 'USD' : 'tokens'
 
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
         el('div', { key: 'lg', style: { display: 'flex', gap: '10px', fontSize: '11px', alignItems: 'center', color: 'var(--dsw-alias-label-secondary, #4b5563)' } }, [
+          el('span', { key: 'today', style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' } }, '仅今天'),
           view === 'token' ? el('span', { key: 'i' }, '输入(未命中)') : null,
           view === 'token' ? el('span', { key: 'c' }, '命中') : null,
           view === 'token' ? el('span', { key: 'o' }, '输出') : null,
@@ -369,19 +391,19 @@ window.__ModuleLoader__.load({
             view === 'cost' ? line('costCny', ACCENT) : null,
             hover >= 0 ? el('line', { key: 'vl', x1: xAt(hover), y1: PAD, x2: xAt(hover), y2: H - PAD, stroke: 'var(--dsw-alias-border-strong, #b0b7c3)', strokeDasharray: '3 3' }) : null,
             hover >= 0 && view === 'token' ? [
-              el('circle', { key: 'i', cx: xAt(hover), cy: yAt(days[hover].uncachedInput), r: 3, fill: '#b45409' }),
-              el('circle', { key: 'c', cx: xAt(hover), cy: yAt(days[hover].cacheRead), r: 3, fill: OK }),
-              el('circle', { key: 'o', cx: xAt(hover), cy: yAt(days[hover].output), r: 3, fill: ACCENT }),
+              el('circle', { key: 'i', cx: xAt(hover), cy: yAt(hours[hover].uncachedInput), r: 3, fill: '#b45409' }),
+              el('circle', { key: 'c', cx: xAt(hover), cy: yAt(hours[hover].cacheRead), r: 3, fill: OK }),
+              el('circle', { key: 'o', cx: xAt(hover), cy: yAt(hours[hover].output), r: 3, fill: ACCENT }),
             ] : null,
-            hover >= 0 && view === 'cost' ? el('circle', { key: 'co', cx: xAt(hover), cy: yAt(days[hover].costCny), r: 3, fill: ACCENT }) : null,
-            days.map(function (x, i) {
+            hover >= 0 && view === 'cost' ? el('circle', { key: 'co', cx: xAt(hover), cy: yAt(hours[hover].costCny), r: 3, fill: ACCENT }) : null,
+            hours.map(function (x, i) {
               if (i % 3 !== 0 && i !== 0 && i !== N - 1) return null
               return el('text', { key: 'dl' + i, x: xAt(i), y: H - PAD + 14, fontSize: 9, fill: 'var(--dsw-alias-label-tertiary, #6b7684)', textAnchor: 'middle' }, x.label)
             }),
             el('text', { key: 'mx', x: W - PAD, y: H - PAD + 14, fontSize: 10, fill: MUTED.color, textAnchor: 'end' }, yAxisLabel),
             rounds.length === 0 ? el('text', { key: 'em', x: W / 2, y: H / 2, fontSize: 12, fill: MUTED.color, textAnchor: 'middle' }, '暂无足够的轮次数据') : null,
           ]),
-          day ? el('div', {
+          cell ? el('div', {
             key: 'tip',
             style: {
               position: 'absolute', top: '4px', left: (xAt(hover) / W * 100) + '%',
@@ -392,15 +414,15 @@ window.__ModuleLoader__.load({
             },
           }, view === 'token'
             ? [
-                el('div', { key: 'dt', style: { fontWeight: 600 } }, day.label),
-                el('div', { key: 'i' }, '输入(未命中) ' + fmtTokens(day.uncachedInput)),
-                el('div', { key: 'c' }, '命中 ' + fmtTokens(day.cacheRead)),
-                el('div', { key: 'o' }, '输出 ' + fmtTokens(day.output)),
-                el('div', { key: 'co', style: { color: ACCENT } }, '成本(估算) ' + fmtMoney(day.costCny, props.cnyPerUsd)),
+                el('div', { key: 'dt', style: { fontWeight: 600 } }, cell.label),
+                el('div', { key: 'i' }, '输入(未命中) ' + fmtTokens(cell.uncachedInput)),
+                el('div', { key: 'c' }, '命中 ' + fmtTokens(cell.cacheRead)),
+                el('div', { key: 'o' }, '输出 ' + fmtTokens(cell.output)),
+                el('div', { key: 'co', style: { color: ACCENT } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
               ]
             : [
-                el('div', { key: 'dt', style: { fontWeight: 600 } }, day.label),
-                el('div', { key: 'co', style: { color: ACCENT } }, '成本(估算) ' + fmtMoney(day.costCny, props.cnyPerUsd)),
+                el('div', { key: 'dt', style: { fontWeight: 600 } }, cell.label),
+                el('div', { key: 'co', style: { color: ACCENT } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
               ]) : null,
         ]),
       ])
@@ -519,8 +541,9 @@ window.__ModuleLoader__.load({
       ])
     }
 
-    // 历史明细
+    // 历史明细 / 用量逐轮列表：每页条数
     var HISTORY_PAGE = 15
+    var USAGE_PAGE = 10
     var PAGE_BTN = Object.assign({}, BTN, { padding: '0 8px', minHeight: '24px', fontSize: '11px' })
     function csvEscape(v) {
       var s = String(v == null ? '' : v)
@@ -645,7 +668,7 @@ window.__ModuleLoader__.load({
           el('div', { key: 'col', style: { width: '100%', maxWidth: '640px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '14px' } }, [
             el(Card, { key: 'bal' }, el(BalanceTab, { key: 'b' })),
             el(Card, { key: 'use' }, el(UsageTab, { key: 'u', ...tabProps })),
-            el(Card, { key: 'chart', title: 'token 折线图' }, el(ChartTab, { key: 'c', ...tabProps })),
+            el(Card, { key: 'chart', title: 'token 折线图（仅当天）' }, el(ChartTab, { key: 'c', ...tabProps })),
             el(Card, { key: 'heat', title: 'token 热力图（最近 13 周）' }, el(HeatTab, { key: 'h', ...tabProps })),
             el(Card, { key: 'hist' }, el(HistoryTab, { key: 'r', ...tabProps })),
           ]),

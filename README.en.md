@@ -8,11 +8,8 @@
 
 <p align="center">
   <strong>Spread the DeepSeek Harness token bill across your sidebar. Balance, hit rate, cost curves, heatmaps — all behind one "Usage" button.</strong><br>
-  Costs are estimated, cache hits are real, and your provider knows about the debt first.
+  Costs are estimated, cache hits are real.
 </p>
-
-![Usage panel overview: provider balance / usage & hit rate / chart / heatmap / history](assets/screenshot.png)
-
 `dsh-usage` injects a **「用量」button above the Settings seat** in the dsh web sidebar. The panel is a single-page modal. All token usage is parsed from dsh session logs (in-memory + persisted zstd on disk); cost is estimated per request time using the official peak/off-peak pricing; credentials are resolved host-side only, never leaving the machine.
 
 ## Panel sections
@@ -28,9 +25,9 @@
 Switch **all sessions / one session** from the title row. Hit rate is the **input-side cache hit rate**.
 
 ### Chart
-![Token / cost dual-view line chart, last 14 days aggregated by day, hover for details](assets/chart.png)
+![Token / cost dual-view line chart, today only aggregated by hour, smooth curve, hover for details](assets/chart.png)
 
-Last 14 days aggregated by day, **Token / Cost** dual view, hover shows per-day buckets and cost estimate.
+Shows only **today**, aggregated by hour as a smooth curve, **Token / Cost** dual view; hover reveals that hour's buckets and cost estimate.
 
 ### Heatmap
 ![Time / session dual-mode heatmap in GitHub contribution greens](assets/heatmap.png)
@@ -41,6 +38,8 @@ Last 14 days aggregated by day, **Token / Cost** dual view, hover shows per-day 
 ![History: paginated + CSV export with session / model / cost](assets/history.png)
 
 Full detail paginated (15 rows/page, height-capped scroll), one-click CSV export (BOM included, opens directly in Excel).
+
+> 🚧 **More query features in development**: session filtering, sorting, time-range filters, and more are on the way.
 
 ## Data semantics
 
