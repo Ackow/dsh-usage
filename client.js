@@ -352,9 +352,26 @@ window.__ModuleLoader__.load({
         }
         return d
       }
-      function line(key, color) {
+      // 折线样式：颜色 + 线型（实线 / 虚线 / 点线），颜色同时用于图例与悬浮提示。
+      // 注意 ACCENT 是 CSS 变量，图例/提示里的"同色"文本无法直接用 CSS 变量做
+      // stroke 外的渲染（fill 可用），这里统一用常量 + 变量双轨：
+      //   lineStyle(key) -> {color, dash, solidColor}   solidColor = 纯色兜底
+      var LINE_STYLES = {
+        uncachedInput: { color: WARN, dash: null, label: '输入(未命中)' },
+        cacheRead: { color: OK, dash: '5 3', label: '命中' },
+        output: { color: ACCENT, dash: '2 3', label: '输出' },
+        costCny: { color: ACCENT, dash: null, label: '成本(估算)' },
+      }
+      function lineStyle(key) {
+        var s = LINE_STYLES[key] || { color: INK, dash: null, label: key }
+        return { color: s.color, dash: s.dash, label: s.label }
+      }
+      function line(key) {
+        var st = lineStyle(key)
         var pts = hours.map(function (x, i) { return [xAt(i), yAt(x[key])] })
-        return el('path', { key: key, d: smoothLine(pts), fill: 'none', stroke: color, strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' })
+        var props = { key: key, d: smoothLine(pts), fill: 'none', stroke: st.color, strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }
+        if (st.dash) props.strokeDasharray = st.dash
+        return el('path', props)
       }
       function onMove(e) {
         var rect = e.currentTarget.getBoundingClientRect()
@@ -371,9 +388,23 @@ window.__ModuleLoader__.load({
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
         el('div', { key: 'lg', style: { display: 'flex', gap: '10px', fontSize: '11px', alignItems: 'center', color: 'var(--dsw-alias-label-secondary, #4b5563)' } }, [
           el('span', { key: 'today', style: { fontWeight: 600, color: 'var(--dsw-alias-label-primary, #1f2329)' } }, '仅今天'),
-          view === 'token' ? el('span', { key: 'i' }, '输入(未命中)') : null,
-          view === 'token' ? el('span', { key: 'c' }, '命中') : null,
-          view === 'token' ? el('span', { key: 'o' }, '输出') : null,
+          // 图例：每条线用「对应颜色 + 对应线型」的小线段标识，文字说明含义
+          view === 'token' ? el('span', { key: 'legi', style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, [
+            el('svg', { key: 'si', width: '14', height: '8', viewBox: '0 0 14 8' }, el('line', { x1: '0', y1: '4', x2: '14', y2: '4', stroke: lineStyle('uncachedInput').color, strokeWidth: '2' })),
+            el('span', { key: 'ti' }, '输入(未命中)'),
+          ]) : null,
+          view === 'token' ? el('span', { key: 'legc', style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, [
+            el('svg', { key: 'sc', width: '14', height: '8', viewBox: '0 0 14 8' }, el('line', { x1: '0', y1: '4', x2: '14', y2: '4', stroke: lineStyle('cacheRead').color, strokeWidth: '2', strokeDasharray: lineStyle('cacheRead').dash })),
+            el('span', { key: 'tc' }, '命中'),
+          ]) : null,
+          view === 'token' ? el('span', { key: 'lego', style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, [
+            el('svg', { key: 'so', width: '14', height: '8', viewBox: '0 0 14 8' }, el('line', { x1: '0', y1: '4', x2: '14', y2: '4', stroke: lineStyle('output').color, strokeWidth: '2', strokeDasharray: lineStyle('output').dash })),
+            el('span', { key: 'to' }, '输出'),
+          ]) : null,
+          view === 'cost' ? el('span', { key: 'legco', style: { display: 'inline-flex', alignItems: 'center', gap: '4px' } }, [
+            el('svg', { key: 'sco', width: '14', height: '8', viewBox: '0 0 14 8' }, el('line', { x1: '0', y1: '4', x2: '14', y2: '4', stroke: lineStyle('costCny').color, strokeWidth: '2' })),
+            el('span', { key: 'tco' }, '成本(估算)'),
+          ]) : null,
           el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
           el('button', { key: 'tv', type: 'button', onClick: function () { setView('token') }, style: Object.assign({}, BTN, { padding: '0 10px', minHeight: '24px', fontSize: '11px' }, view === 'token' ? { borderColor: ACCENT, color: ACCENT } : {}) }, 'Token'),
           el('button', { key: 'cv', type: 'button', onClick: function () { setView('cost') }, style: Object.assign({}, BTN, { padding: '0 10px', minHeight: '24px', fontSize: '11px' }, view === 'cost' ? { borderColor: ACCENT, color: ACCENT } : {}) }, '成本'),
@@ -385,10 +416,10 @@ window.__ModuleLoader__.load({
           el('svg', { key: 'svg', width: '100%', height: H, viewBox: '0 0 ' + W + ' ' + H, preserveAspectRatio: 'none' }, [
             el('line', { key: 'ax', x1: PAD, y1: H - PAD, x2: W - PAD, y2: H - PAD, stroke: 'var(--dsw-alias-border-default, #e5e7eb)' }),
             el('line', { key: 'ay', x1: PAD, y1: PAD, x2: PAD, y2: H - PAD, stroke: 'var(--dsw-alias-border-default, #e5e7eb)' }),
-            view === 'token' ? line('uncachedInput', '#b45409') : null,
-            view === 'token' ? line('cacheRead', OK) : null,
-            view === 'token' ? line('output', ACCENT) : null,
-            view === 'cost' ? line('costCny', ACCENT) : null,
+            view === 'token' ? line('uncachedInput') : null,
+            view === 'token' ? line('cacheRead') : null,
+            view === 'token' ? line('output') : null,
+            view === 'cost' ? line('costCny') : null,
             hover >= 0 ? el('line', { key: 'vl', x1: xAt(hover), y1: PAD, x2: xAt(hover), y2: H - PAD, stroke: 'var(--dsw-alias-border-strong, #b0b7c3)', strokeDasharray: '3 3' }) : null,
             hover >= 0 && view === 'token' ? [
               el('circle', { key: 'i', cx: xAt(hover), cy: yAt(hours[hover].uncachedInput), r: 3, fill: '#b45409' }),
@@ -415,14 +446,15 @@ window.__ModuleLoader__.load({
           }, view === 'token'
             ? [
                 el('div', { key: 'dt', style: { fontWeight: 600 } }, cell.label),
-                el('div', { key: 'i' }, '输入(未命中) ' + fmtTokens(cell.uncachedInput)),
-                el('div', { key: 'c' }, '命中 ' + fmtTokens(cell.cacheRead)),
-                el('div', { key: 'o' }, '输出 ' + fmtTokens(cell.output)),
-                el('div', { key: 'co', style: { color: ACCENT } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
+                // 每行文字颜色 = 对应折线颜色（线型与图例一致，便于对照）
+                el('div', { key: 'i', style: { color: lineStyle('uncachedInput').color } }, '输入(未命中) ' + fmtTokens(cell.uncachedInput)),
+                el('div', { key: 'c', style: { color: lineStyle('cacheRead').color } }, '命中 ' + fmtTokens(cell.cacheRead)),
+                el('div', { key: 'o', style: { color: lineStyle('output').color } }, '输出 ' + fmtTokens(cell.output)),
+                el('div', { key: 'co', style: { color: lineStyle('costCny').color } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
               ]
             : [
                 el('div', { key: 'dt', style: { fontWeight: 600 } }, cell.label),
-                el('div', { key: 'co', style: { color: ACCENT } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
+                el('div', { key: 'co', style: { color: lineStyle('costCny').color } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
               ]) : null,
         ]),
       ])
@@ -459,7 +491,8 @@ window.__ModuleLoader__.load({
         return 'rgb(0, 109, 40)'
       }
 
-      // ---- 时间模式：最近 13 周 × 星期 ----
+      // ---- 时间模式：最近 13 周 × 星期（GitHub 风格：每列 = 一周，
+      // 列内固定从周日排到周六，头部不足一周的空位补齐，日期与星期标签对齐）----
       var cells = []
       if (mode === 'time') {
         var byDay = {}
@@ -472,10 +505,24 @@ window.__ModuleLoader__.load({
         Object.keys(byDay).forEach(function (k) { if (byDay[k] > max) max = byDay[k] })
         var DAYS = 13 * 7
         var today = new Date(); today.setHours(0, 0, 0, 0)
-        for (var i = DAYS - 1; i >= 0; i--) {
-          var day = new Date(today.getTime() - i * 86400000)
+        // 91 天前的日期及其星期；把它对齐到最近的周日作为网格起点，
+        // 前面补 lead 个空白格，使每一列都从周日开始、与左侧星期标签对齐。
+        var start = new Date(today.getTime() - (DAYS - 1) * 86400000)
+        var lead = start.getDay()   // 0=周日 … 6=周六
+        var gridStart = new Date(start.getTime() - lead * 86400000)
+        var total = DAYS + lead
+        for (var i = 0; i < total; i++) {
+          var day = new Date(gridStart.getTime() + i * 86400000)
           var key = day.getFullYear() + '-' + String(day.getMonth() + 1).padStart(2, '0') + '-' + String(day.getDate()).padStart(2, '0')
-          cells.push({ key: key, week: Math.floor((DAYS - 1 - i) / 7), dow: day.getDay(), v: byDay[key] || 0, title: key + ' · ' + fmtTokens(byDay[key] || 0) + ' tokens' })
+          var blank = i < lead   // 头部补齐的空位：不是 13 周内的真实日期
+          cells.push({
+            key: key,
+            week: Math.floor(i / 7),
+            dow: day.getDay(),
+            blank: blank,
+            v: blank ? 0 : (byDay[key] || 0),
+            title: blank ? '' : (key + ' · ' + fmtTokens(byDay[key] || 0) + ' tokens'),
+          })
         }
       } else {
         // ---- 会话模式：行 = 会话，列 = 该会话的轮次 ----
@@ -497,15 +544,20 @@ window.__ModuleLoader__.load({
 
       var body = mode === 'time'
         ? (function () {
+            // 列数 = 实际出现的 week 组数（头部补位可能让网格多出一列）
+            var weekMax = 0
+            cells.forEach(function (c) { if (c.week > weekMax) weekMax = c.week })
             var weeks = []
-            for (var w = 0; w < 13; w++) weeks.push(cells.filter(function (c) { return c.week === w }))
+            for (var w = 0; w <= weekMax; w++) weeks.push(cells.filter(function (c) { return c.week === w }))
             return el('div', { key: 'grid', style: { display: 'flex', justifyContent: 'center', alignItems: 'flex-start', gap: '3px', padding: '6px 0', width: '100%' } }, [
               el('div', { key: 'lbl', style: { flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: '3px', marginRight: '6px', fontSize: '10px', color: 'var(--dsw-alias-label-tertiary, #6b7684)' } },
                 DOW.map(function (x, i) { return el('span', { key: i, style: { height: '18px', lineHeight: '18px' } }, x) })),
               weeks.map(function (wk, w) {
                 return el('div', { key: w, style: { width: '18px', flex: '0 0 auto', display: 'flex', flexDirection: 'column', gap: '3px' } },
                   wk.map(function (c) {
-                    return el('div', { key: c.key, title: c.title, style: { width: '18px', height: '18px', borderRadius: '3px', background: shade(c.v) } })
+                    // blank = 头部对齐补位（不是真实日期）：渲染为透明占位，
+                    // 保证列内固定周日→周六的顺序，与左侧星期标签一一对应。
+                    return el('div', { key: c.key, title: c.title, style: { width: '18px', height: '18px', borderRadius: '3px', background: c.blank ? 'transparent' : shade(c.v) } })
                   }))
               }),
             ])
