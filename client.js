@@ -2,9 +2,9 @@
  * dshd-usage — dsh client 半区（web）。
  *
  * 在 dsh 侧栏设置按钮上方注入「用量」按钮（sidebar.footer.action, order 70），
- * 点开页内模态面板：余额 / 用量与命中率 / 折线图 / 热力图（GitHub 样式）/ 历史。
+ * 点开页内模态面板：余额 / 预算 / 折线图 / 热力图（GitHub 样式）/ 用量 / 历史。
  * 数据经同源 HTTP 路由 `/dsh-usage/*`（host 半区注册）fetch，成本为估算值
- * （标注「估算」），支持 USD / CNY 切换。
+ * （标注「估算」），货币统一 CNY（¥）。
  *
  * Bundle contract: `window.__ModuleLoader__.load({ id, factory })`。
  * NOTE：react/jsx-runtime 的 jsx(type, props, key) 第三参是 key 不是 children；
@@ -46,6 +46,20 @@ window.__ModuleLoader__.load({
         return r.json()
       }).catch(function (e) {
         LOG('fetch ' + path + ' failed: ' + e)
+        return null
+      })
+    }
+
+    function postJson(path, body) {
+      return fetch(path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status)
+        return r.json()
+      }).catch(function (e) {
+        LOG('post ' + path + ' failed: ' + e)
         return null
       })
     }
@@ -101,6 +115,10 @@ window.__ModuleLoader__.load({
     var CLOSE_PATHS = [
       'M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z',
     ]
+    // 设置（Material settings, 24 viewBox）。
+    var SETTINGS_PATHS = [
+      'M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z',
+    ]
 
     // 通用 SVG 图标（fill 模式）。
     function Glyph(props) {
@@ -124,10 +142,10 @@ window.__ModuleLoader__.load({
       if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K'
       return String(Math.round(n))
     }
-    // 成本统一以 USD 显示（host 算的是 CNY，按 cnyPerUsd 换算）。
-    function fmtMoney(cny, cnyPerUsd) {
+    // 成本统一以 CNY（¥）显示（host 算的就是 CNY；货币统一，不再换算 USD）。
+    function fmtMoney(cny) {
       var v = Number(cny) || 0
-      return '$' + (v / (cnyPerUsd || 6.76)).toFixed(4)
+      return '¥' + v.toFixed(4)
     }
 
     // ------------------------------------------------------------- entry
@@ -184,20 +202,27 @@ window.__ModuleLoader__.load({
       return el('div', {
         style: {
           border: '1px solid var(--dsw-alias-border-default, #e5e7eb)',
-          borderRadius: '12px',
+          borderRadius: '14px',
           background: 'var(--dsw-alias-bg-layer-3, #fbfbfc)',
           padding: '12px 14px',
           display: 'flex', flexDirection: 'column', gap: '10px',
           width: '100%', boxSizing: 'border-box',
+          boxShadow: '0 1px 3px rgba(0,0,0,.04)',
+          transition: 'box-shadow .2s ease, border-color .2s ease',
         },
+        onMouseEnter: function (e) { try { e.currentTarget.style.boxShadow = '0 2px 10px rgba(0,0,0,.07)'; e.currentTarget.style.borderColor = 'var(--dsw-alias-border-strong, #c9cdd6)' } catch (err) { /* noop */ } },
+        onMouseLeave: function (e) { try { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,.04)'; e.currentTarget.style.borderColor = 'var(--dsw-alias-border-default, #e5e7eb)' } catch (err) { /* noop */ } },
       }, [
-        props.title ? el('div', { key: 't', style: { fontWeight: 600, fontSize: '13px', color: INK } }, props.title) : null,
+        props.title ? el('div', { key: 't', style: { display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '13px', color: INK } }, [
+          el('span', { key: 'bar', style: { width: '3px', height: '12px', borderRadius: '2px', background: 'var(--dsw-alias-accent-strong, #4d6bfe)', flex: '0 0 auto' } }),
+          el('span', { key: 'txt' }, props.title),
+        ]) : null,
         props.children,
       ])
     }
 
     // 余额
-    function BalanceTab() {
+    function BalanceTab(props) {
       var [data, setData] = useState(null)
       var [provider, setProvider] = useState('deepseek')
       var [loading, setLoading] = useState(false)
@@ -206,7 +231,13 @@ window.__ModuleLoader__.load({
         fetchJson('/dsh-usage/balance?provider=' + encodeURIComponent(provider)).then(function (d) { setData(d); setLoading(false) })
       }
       useEffect(function () { load() }, [provider])
-      var providerName = { deepseek: 'DeepSeek', openrouter: 'OpenRouter' }[data && data.provider ? data.provider : provider] || 'DeepSeek'
+      // 自动刷新：props.refreshTick 变化时重新拉取
+      useEffect(function () { if (props.refreshTick > 0) load() }, [props.refreshTick])
+      var providers = props.providers || []
+      var providerName = { deepseek: 'DeepSeek', openrouter: 'OpenRouter' }[data && data.provider ? data.provider : provider] || provider
+      var customLabel = {}
+      providers.forEach(function (p) { customLabel[p.id] = p.label || p.id })
+      if (customLabel[provider]) providerName = customLabel[provider]
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
         el('div', { key: 'hd', style: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' } }, [
           el('span', { key: 't', style: { fontWeight: 600, fontSize: '13px', color: INK, flex: '1 1 auto' } }, '供应商余额'),
@@ -216,7 +247,9 @@ window.__ModuleLoader__.load({
           }, [
             el('option', { key: 'ds', value: 'deepseek' }, 'DeepSeek'),
             el('option', { key: 'or', value: 'openrouter' }, 'OpenRouter'),
-          ]),
+          ].concat(providers.map(function (p) {
+            return el('option', { key: p.id, value: p.id }, (p.label || p.id) + (p.type ? ' · ' + p.type : ''))
+          }))),
           el('button', { key: 'r', type: 'button', style: BTN, onClick: load, disabled: loading }, loading ? '加载中…' : '刷新'),
         ]),
         data === null ? el('div', { key: 'e', style: MUTED }, '余额数据加载中…')
@@ -227,9 +260,11 @@ window.__ModuleLoader__.load({
           : el('div', { key: 'cards', style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
               (data.infos || []).map(function (info) {
                 var symbol = info.currency === 'CNY' ? '¥' : info.currency === 'USD' ? '$' : ''
-                return el('div', { key: info.currency, style: { border: '1px solid var(--dsw-alias-border-default, #e5e7eb)', borderRadius: '10px', padding: '10px 12px' } }, [
-                  el('div', { key: 'c', style: { fontWeight: 600, fontSize: '13px' } }, providerName + ' · ' + info.currency),
-                  el('div', { key: 't', style: { fontSize: '18px', fontWeight: 700, margin: '4px 0' } }, symbol + info.totalBalance),
+                return el('div', { key: info.currency, style: { border: '1px solid var(--dsw-alias-border-default, #e5e7eb)', borderRadius: '12px', padding: '10px 12px', background: 'var(--dsw-alias-bg-layer-2, #ffffff)' } }, [
+                  el('div', { key: 'c', style: { display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #4b5563)' } },
+                    providerName + ' · ' + info.currency),
+                  el('div', { key: 't', style: { fontSize: '22px', fontWeight: 800, margin: '4px 0', letterSpacing: '0.5px', background: 'linear-gradient(135deg, var(--dsw-alias-accent-strong, #4d6bfe), var(--dsw-alias-accent-weak, #7b96ff))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' } },
+                    symbol + (info.totalBalance == null ? '—' : info.totalBalance)),
                   el('div', { key: 'm', style: MUTED2 }, '充值 ' + symbol + (info.toppedUpBalance ?? '—') + ' · 赠金 ' + symbol + (info.grantedBalance ?? '—')),
                 ])
               })),
@@ -242,6 +277,282 @@ window.__ModuleLoader__.load({
       borderRadius: '8px', padding: '4px 8px', maxWidth: '180px',
       background: 'transparent', color: 'inherit', font: 'inherit', fontSize: '12px',
     }
+
+    // 预算卡片：额度 / 已用 / 进度条 / 预警（需求：预算管理）
+    function BudgetCard(props) {
+      var [data, setData] = useState(null)
+      function load() {
+        fetchJson('/dsh-usage/budget').then(function (d) { setData(d) })
+      }
+      useEffect(function () { load() }, [])
+      useEffect(function () { if (props.refreshTick > 0) load() }, [props.refreshTick])
+      if (!data) return el('div', { key: 'e', style: MUTED }, '预算状态加载中…')
+      if (!data.enabled) {
+        return el('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+          el('span', { key: 't', style: MUTED2 }, '预算未启用'),
+          el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+          el('button', { key: 'go', type: 'button', style: BTN, onClick: function () { if (props.onOpenSettings) props.onOpenSettings() } }, '去设置'),
+        ])
+      }
+      var pct = Math.min(100, data.pct || 0)
+      var barColor = data.warn ? '#d64541' : data.alert ? '#b45409' : '#1f9d55'
+      var periodLabel = { daily: '今日', monthly: '本月', cumulative: '累计' }[data.period] || data.period
+      return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
+        el('div', { key: 'hd', style: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' } }, [
+          el('span', { key: 't', style: { fontWeight: 600, fontSize: '13px', color: INK, flex: '1 1 auto' } }, '预算（' + periodLabel + '）'),
+          el('span', { key: 'p', style: { fontWeight: 700, fontSize: '13px', color: barColor } }, pct.toFixed(0) + '%'),
+          el('button', { key: 'r', type: 'button', style: BTN, onClick: load }, '刷新'),
+        ]),
+        el('div', { key: 'bar', style: { height: '8px', borderRadius: '4px', background: 'var(--dsw-alias-interactive-bg-hover, rgba(0,0,0,.08))', overflow: 'hidden', width: '100%' } },
+          el('div', { key: 'fill', style: { height: '100%', width: pct + '%', borderRadius: '4px', background: barColor, transition: 'width .4s ease' } })),
+        el('div', { key: 'nums', style: { display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px', color: 'var(--dsw-alias-label-secondary, #4b5563)' } }, [
+          el('span', { key: 'spent' }, '已用 ¥' + (data.spentCny != null ? Number(data.spentCny).toFixed(2) : '—')),
+          el('span', { key: 'limit' }, '额度 ¥' + (data.limitCny != null ? Number(data.limitCny).toFixed(2) : '—')),
+          el('span', { key: 'left' }, '剩余 ¥' + (data.remainingCny != null ? Number(data.remainingCny).toFixed(2) : '—')),
+          el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+          data.warn ? el('span', { key: 'w', style: { color: '#d64541', fontWeight: 600 } }, '⚠ 已超支') : (data.alert ? el('span', { key: 'w', style: { color: '#b45409', fontWeight: 600 } }, '⚠ 接近上限') : null),
+        ]),
+      ])
+    }
+
+    // ------------------------------------------------------------- 设置弹窗
+    // 顶部标题栏「设置」按钮打开的可视化配置弹窗：单价 / 预算 / 第三方供应商 /
+    // 刷新间隔。全部表单化（无 JSON 文本编辑），货币统一 CNY（¥）。
+    function SettingsModal(props) {
+      var [cfg, setCfg] = useState(null)
+      var [saving, setSaving] = useState(false)
+      var [msg, setMsg] = useState('')
+      // 编辑状态
+      var [budgetEnabled, setBudgetEnabled] = useState(false)
+      var [budgetLimit, setBudgetLimit] = useState('')
+      var [budgetPeriod, setBudgetPeriod] = useState('monthly')
+      var [refresh, setRefresh] = useState('300')
+      // 单价：{ model: {cacheHit, cacheMiss, output} }
+      var [pricing, setPricing] = useState(null)
+      // 供应商：[{id,label,type,baseUrl,apiKeyEnv,balancePath,balanceField,currency,unit}]
+      var [providers, setProviders] = useState([])
+
+      function load() {
+        fetchJson('/dsh-usage/config').then(function (d) {
+          if (!d) return
+          setCfg(d)
+          var b = d.budget || {}
+          setBudgetEnabled(b.enabled === true)
+          setBudgetLimit(b.limitCny ? String(b.limitCny) : '')
+          setBudgetPeriod(b.period || 'monthly')
+          setRefresh(String(d.refreshSeconds != null ? d.refreshSeconds : 300))
+          // pricing: 转成可编辑数组 [{model, cacheHit, cacheMiss, output}]
+          var list = []
+          var p = d.pricing || {}
+          for (var m in p) {
+            if (Object.prototype.hasOwnProperty.call(p, m)) {
+              var e = p[m] || {}
+              list.push({ model: m, cacheHit: e.cacheHit != null ? String(e.cacheHit) : '', cacheMiss: e.cacheMiss != null ? String(e.cacheMiss) : '', output: e.output != null ? String(e.output) : '' })
+            }
+          }
+          setPricing(list)
+          setProviders((d.providers || []).map(function (x) {
+            return {
+              id: x.id || '', label: x.label || '', type: x.type || 'generic',
+              baseUrl: x.baseUrl || '', apiKeyEnv: x.apiKeyEnv || '',
+              balancePath: x.balancePath || '', balanceField: x.balanceField || '',
+              currency: x.currency || 'CNY', unit: x.unit ? String(x.unit) : '1',
+            }
+          }))
+        })
+      }
+      useEffect(function () { load() }, [])
+
+      function setPricingRow(idx, field, val) {
+        setPricing(function (list) {
+          var next = (list || []).map(function (r) { return Object.assign({}, r) })
+          if (!next[idx]) next[idx] = { model: '', cacheHit: '', cacheMiss: '', output: '' }
+          next[idx][field] = val
+          return next
+        })
+      }
+      function addPricingRow() {
+        setPricing(function (list) { return (list || []).concat([{ model: '', cacheHit: '', cacheMiss: '', output: '' }]) })
+      }
+      function removePricingRow(idx) {
+        setPricing(function (list) { return (list || []).filter(function (_, i) { return i !== idx }) })
+      }
+      function setProviderRow(idx, field, val) {
+        setProviders(function (list) {
+          var next = list.map(function (r) { return Object.assign({}, r) })
+          if (!next[idx]) next[idx] = { id: '', label: '', type: 'generic', baseUrl: '', apiKeyEnv: '', balancePath: '', balanceField: '', currency: 'CNY', unit: '1' }
+          next[idx][field] = val
+          return next
+        })
+      }
+      function addProviderRow() {
+        setProviders(function (list) {
+          return list.concat([{ id: '', label: '', type: 'generic', baseUrl: '', apiKeyEnv: '', balancePath: '', balanceField: '', currency: 'CNY', unit: '1' }])
+        })
+      }
+      function removeProviderRow(idx) {
+        setProviders(function (list) { return list.filter(function (_, i) { return i !== idx }) })
+      }
+
+      function save() {
+        setSaving(true); setMsg('')
+        var body = {}
+        // 单价 → { model: {cacheHit, cacheMiss, output} }
+        var pOut = {}
+        var pBad = false
+        ;(pricing || []).forEach(function (r) {
+          var m = (r.model || '').trim()
+          if (!m) return
+          var hit = Number(r.cacheHit), miss = Number(r.cacheMiss), out = Number(r.output)
+          if (!(hit >= 0) || !(miss >= 0) || !(out >= 0)) { pBad = true; return }
+          pOut[m] = { cacheHit: hit, cacheMiss: miss, output: out }
+        })
+        if (pBad) { setMsg('单价必须是 ≥0 的数字'); setSaving(false); return }
+        body.pricing = pOut
+        // 供应商
+        var provOut = []
+        var provBad = false
+        ;(providers || []).forEach(function (r) {
+          var id = (r.id || '').trim()
+          if (!id) return
+          if (!r.baseUrl && r.type !== 'generic') { provBad = true; return }
+          provOut.push({
+            id: id, label: (r.label || '').trim(), type: r.type || 'generic',
+            baseUrl: (r.baseUrl || '').trim(), apiKeyEnv: (r.apiKeyEnv || '').trim(),
+            balancePath: (r.balancePath || '').trim(), balanceField: (r.balanceField || '').trim(),
+            currency: r.currency || 'CNY', unit: Number(r.unit) > 0 ? Number(r.unit) : 1,
+          })
+        })
+        if (provBad) { setMsg('供应商 baseUrl 不能为空'); setSaving(false); return }
+        body.providers = provOut
+        body.budget = {
+          enabled: budgetEnabled,
+          limitCny: Number(budgetLimit) > 0 ? Number(budgetLimit) : 0,
+          period: budgetPeriod,
+        }
+        var refreshN = Number(refresh)
+        if (refreshN >= 0) body.refreshSeconds = refreshN
+        postJson('/dsh-usage/config', body).then(function (r) {
+          setSaving(false)
+          if (r && r.ok) { setMsg('已保存并生效 ✓'); if (props.onSaved) props.onSaved() }
+          else setMsg('保存失败：' + ((r && r.message) || '未知错误'))
+        })
+      }
+
+      var INPUT = {
+        border: '1px solid var(--dsw-alias-border-default, #d8dde3)',
+        borderRadius: '8px', padding: '4px 8px', background: 'transparent',
+        color: 'inherit', font: 'inherit', fontSize: '12px', boxSizing: 'border-box',
+      }
+      var LBL = { flex: '0 0 90px', fontSize: '12px', color: 'var(--dsw-alias-label-secondary, #4b5563)' }
+      var SMALL = Object.assign({}, INPUT, { width: '76px' })
+
+      return el('div', { style: { position: 'fixed', inset: '0', zIndex: '1300', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, [
+        el('div', { key: 'mask', onClick: props.onClose,
+          style: { position: 'absolute', inset: '0', background: 'var(--dsw-alias-bg-mask-1, rgba(0,0,0,0.24))', backdropFilter: 'var(--dsw-mask-blur, blur(2px))' } }),
+        el('div', { key: 'box', style: {
+          position: 'relative', width: '600px', maxWidth: 'calc(100vw - 48px)',
+          maxHeight: 'min(80vh, 640px)', display: 'flex', flexDirection: 'column',
+          borderRadius: '20px', background: 'var(--dsw-alias-bg-layer-2, #ffffff)',
+          boxShadow: 'var(--dsw-shadow-lv3, 0 8px 40px rgba(0,0,0,0.25))',
+          color: INK, font: 'inherit', fontSize: '13px', lineHeight: '20px', overflow: 'hidden',
+        } }, [
+          el('header', { key: 'h', style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 16px', borderBottom: '1px solid var(--dsw-alias-border-default, #e8e8e8)' } }, [
+            el(Glyph, { paths: SETTINGS_PATHS, viewBox: '0 0 24 24', size: 16 }),
+            el('span', { key: 't', style: { fontWeight: 600, fontSize: '14px', flex: '1 1 auto' } }, '用量设置'),
+            el('span', { key: 'msg', style: { fontSize: '11px', color: msg.indexOf('失败') >= 0 ? '#d64541' : '#1f9d55' } }, msg),
+            el('button', { key: 'x', type: 'button', onClick: props.onClose, style: Object.assign({}, BTN, { minWidth: '28px', padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }) },
+              el(Glyph, { paths: CLOSE_PATHS, viewBox: '0 0 24 24', size: 14 })),
+          ]),
+          el('div', { key: 'body', style: { flex: '1 1 auto', minHeight: '0', overflowY: 'auto', padding: '16px 20px' } }, [
+            !cfg ? el('div', { key: 'e', style: MUTED }, '配置加载中…')
+              : el('div', { key: 'form', style: { display: 'flex', flexDirection: 'column', gap: '16px' } }, [
+                  // 预算
+                  el('div', { key: 'sec-budget', style: { display: 'flex', flexDirection: 'column', gap: '8px' } }, [
+                    el('div', { key: 't', style: { fontWeight: 600, fontSize: '12px', color: INK } }, '预算（成本统一 ¥ CNY）'),
+                    el('div', { key: 'row', style: { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' } }, [
+                      el('label', { key: 'on', style: { display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px' } }, [
+                        el('input', { key: 'c', type: 'checkbox', checked: budgetEnabled, onChange: function (e) { setBudgetEnabled(e.target.checked) } }),
+                        '启用',
+                      ]),
+                      el('input', { key: 'lim', type: 'number', step: '1', min: '0', placeholder: '额度 ¥/周期', value: budgetLimit, onChange: function (e) { setBudgetLimit(e.target.value) }, style: Object.assign({}, INPUT, { width: '120px' }) }),
+                      el('select', { key: 'pd', value: budgetPeriod, style: SELECT, onChange: function (e) { setBudgetPeriod(e.target.value) } }, [
+                        el('option', { key: 'd', value: 'daily' }, '每日'),
+                        el('option', { key: 'm', value: 'monthly' }, '每月'),
+                        el('option', { key: 'c', value: 'cumulative' }, '累计'),
+                      ]),
+                      el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+                      el('span', { key: 'h', style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary, #6b7684)' } }, '自动刷新(秒)'),
+                      el('input', { key: 'rf', type: 'number', step: '30', min: '0', value: refresh, onChange: function (e) { setRefresh(e.target.value) }, style: Object.assign({}, INPUT, { width: '70px' }) }),
+                    ]),
+                  ]),
+                  // 单价（可视化行编辑）
+                  el('div', { key: 'sec-price', style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
+                    el('div', { key: 't', style: { fontWeight: 600, fontSize: '12px', color: INK } }, '单价（¥ / 百万 tokens）'),
+                    el('div', { key: 'head', style: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--dsw-alias-label-tertiary, #6b7684)' } }, [
+                      el('span', { key: 'm', style: { width: '150px', flex: '0 0 auto' } }, '模型'),
+                      el('span', { key: 'h', style: { width: '76px', flex: '0 0 auto', textAlign: 'right' } }, '命中'),
+                      el('span', { key: 'x', style: { width: '76px', flex: '0 0 auto', textAlign: 'right' } }, '未命中'),
+                      el('span', { key: 'o', style: { width: '76px', flex: '0 0 auto', textAlign: 'right' } }, '输出'),
+                      el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+                      el('span', { key: 'd', style: { width: '24px' } }, ''),
+                    ]),
+                    (pricing || []).map(function (r, i) {
+                      return el('div', { key: 'r' + i, style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+                        el('input', { key: 'm', value: r.model, placeholder: 'deepseek-v4-flash', onChange: function (e) { setPricingRow(i, 'model', e.target.value) }, style: Object.assign({}, INPUT, { width: '150px', flex: '0 0 auto' }) }),
+                        el('input', { key: 'h', type: 'number', step: '0.01', min: '0', value: r.cacheHit, onChange: function (e) { setPricingRow(i, 'cacheHit', e.target.value) }, style: Object.assign({}, SMALL, { textAlign: 'right' }) }),
+                        el('input', { key: 'x', type: 'number', step: '0.01', min: '0', value: r.cacheMiss, onChange: function (e) { setPricingRow(i, 'cacheMiss', e.target.value) }, style: Object.assign({}, SMALL, { textAlign: 'right' }) }),
+                        el('input', { key: 'o', type: 'number', step: '0.01', min: '0', value: r.output, onChange: function (e) { setPricingRow(i, 'output', e.target.value) }, style: Object.assign({}, SMALL, { textAlign: 'right' }) }),
+                        el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+                        el('button', { key: 'rm', type: 'button', onClick: function () { removePricingRow(i) }, style: Object.assign({}, BTN, { color: '#b45409', minWidth: '24px', padding: '0 6px' }) }, '×'),
+                      ])
+                    }),
+                    el('button', { key: 'add', type: 'button', onClick: addPricingRow, style: BTN }, '+ 添加模型'),
+                    el('div', { key: 'h', style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary, #6b7684)' } }, '留空模型名的行会被忽略；内置价格会被覆盖。'),
+                  ]),
+                  // 第三方供应商（可视化行编辑）
+                  el('div', { key: 'sec-prov', style: { display: 'flex', flexDirection: 'column', gap: '6px' } }, [
+                    el('div', { key: 't', style: { fontWeight: 600, fontSize: '12px', color: INK } }, '第三方供应商（余额检测）'),
+                    (providers || []).map(function (r, i) {
+                      return el('div', { key: 'p' + i, style: { display: 'flex', flexDirection: 'column', gap: '4px', border: '1px solid var(--dsw-alias-border-default, #e5e7eb)', borderRadius: '10px', padding: '8px 10px' } }, [
+                        el('div', { key: 'row1', style: { display: 'flex', alignItems: 'center', gap: '6px' } }, [
+                          el('input', { key: 'id', value: r.id, placeholder: 'id（如 myapi）', onChange: function (e) { setProviderRow(i, 'id', e.target.value) }, style: Object.assign({}, INPUT, { width: '120px' }) }),
+                          el('input', { key: 'lb', value: r.label, placeholder: '显示名', onChange: function (e) { setProviderRow(i, 'label', e.target.value) }, style: Object.assign({}, INPUT, { width: '110px' }) }),
+                          el('select', { key: 'ty', value: r.type, style: SELECT, onChange: function (e) { setProviderRow(i, 'type', e.target.value) } }, [
+                            el('option', { key: 'g', value: 'generic' }, '通用'),
+                            el('option', { key: 'n', value: 'newapi' }, 'New API'),
+                            el('option', { key: 's', value: 'sub2api' }, 'Sub2API'),
+                          ]),
+                          el('span', { key: 'sp', style: { flex: '1 1 auto' } }),
+                          el('button', { key: 'rm', type: 'button', onClick: function () { removeProviderRow(i) }, style: Object.assign({}, BTN, { color: '#b45409', minWidth: '24px', padding: '0 6px' }) }, '×'),
+                        ]),
+                        el('div', { key: 'row2', style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } }, [
+                          el('input', { key: 'bu', value: r.baseUrl, placeholder: 'baseUrl（如 https://api.xxx.com）', onChange: function (e) { setProviderRow(i, 'baseUrl', e.target.value) }, style: Object.assign({}, INPUT, { width: '200px', flex: '1 1 auto' }) }),
+                          el('input', { key: 'ke', value: r.apiKeyEnv, placeholder: 'Key 环境变量', onChange: function (e) { setProviderRow(i, 'apiKeyEnv', e.target.value) }, style: Object.assign({}, INPUT, { width: '130px' }) }),
+                          el('select', { key: 'cu', value: r.currency, style: SELECT, onChange: function (e) { setProviderRow(i, 'currency', e.target.value) } }, [
+                            el('option', { key: 'cny', value: 'CNY' }, '¥ CNY'),
+                            el('option', { key: 'usd', value: 'USD' }, '$ USD'),
+                          ]),
+                        ]),
+                        el('div', { key: 'row3', style: { display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' } }, [
+                          el('input', { key: 'bp', value: r.balancePath, placeholder: '余额路径（如 /user/balance）', onChange: function (e) { setProviderRow(i, 'balancePath', e.target.value) }, style: Object.assign({}, INPUT, { width: '150px' }) }),
+                          el('input', { key: 'bf', value: r.balanceField, placeholder: '余额字段（如 balanceInfos.0.totalBalance）', onChange: function (e) { setProviderRow(i, 'balanceField', e.target.value) }, style: Object.assign({}, INPUT, { width: '190px', flex: '1 1 auto' }) }),
+                          el('input', { key: 'un', value: r.unit, placeholder: '单位换算', onChange: function (e) { setProviderRow(i, 'unit', e.target.value) }, style: Object.assign({}, INPUT, { width: '70px' }) }),
+                        ]),
+                      ])
+                    }),
+                    el('button', { key: 'add', type: 'button', onClick: addProviderRow, style: BTN }, '+ 添加供应商'),
+                  ]),
+                ]),
+          ]),
+          el('footer', { key: 'f', style: { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px', padding: '10px 16px', borderTop: '1px solid var(--dsw-alias-border-default, #e8e8e8)' } }, [
+            el('button', { key: 'cancel', type: 'button', onClick: props.onClose, style: BTN }, '取消'),
+            el('button', { key: 'save', type: 'button', onClick: save, disabled: saving, style: Object.assign({}, BTN, { color: '#fff', background: 'var(--dsw-alias-accent-strong, #4d6bfe)', borderColor: 'transparent' }) }, saving ? '保存中…' : '保存'),
+          ]),
+        ]),
+      ])
+    }
+
     function UsageTab(props) {
       var [data, setData] = useState(null)
       var [page, setPage] = useState(1)
@@ -249,12 +560,15 @@ window.__ModuleLoader__.load({
         fetchJson(sessionUrl('/dsh-usage/session', props.sessionId)).then(function (d) { setData(d) })
       }
       useEffect(function () { load() }, [props.sessionId])
+      useEffect(function () { if (props.refreshTick > 0) load() }, [props.refreshTick])
       useEffect(function () { setPage(1) }, [props.sessionId])
       var d = data && !data.noSession ? data : null
       var rounds = (d && d.rounds) || []
-      var pages = Math.max(1, Math.ceil(rounds.length / USAGE_PAGE))
+      // 倒序：最新在前
+      var descRounds = rounds.slice().reverse()
+      var pages = Math.max(1, Math.ceil(descRounds.length / USAGE_PAGE))
       var cur = Math.min(page, pages)
-      var pageRounds = rounds.slice((cur - 1) * USAGE_PAGE, cur * USAGE_PAGE)
+      var pageRounds = descRounds.slice((cur - 1) * USAGE_PAGE, cur * USAGE_PAGE)
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
         el('div', { key: 'hd', style: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' } }, [
           el('span', { key: 't', style: { fontWeight: 600, fontSize: '13px', color: INK, flex: '1 1 auto' } }, '用量与命中率'),
@@ -275,7 +589,7 @@ window.__ModuleLoader__.load({
               el('div', { key: 'sum', style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', width: '100%' } }, [
                 el('div', { key: 'b', style: MUTED2 }, '计费输入 ' + fmtTokens(d.billedInput) + ' tokens'),
                 el('div', { key: 'h', style: { fontWeight: 700, color: INK, fontSize: '14px' } }, '命中率 ' + (d.hitRate == null ? '—' : d.hitRate + '%')),
-                el('div', { key: 'c', style: MUTED2 }, '成本（估算）' + fmtMoney(d.costCny, props.cnyPerUsd)),
+                el('div', { key: 'c', style: MUTED2 }, '成本（估算）' + fmtMoney(d.costCny)),
                 el('div', { key: 'sp', style: { flex: '1 1 auto' } }),
                 el('button', { key: 'r', type: 'button', style: BTN, onClick: load }, '重新统计'),
               ]),
@@ -286,12 +600,12 @@ window.__ModuleLoader__.load({
                     el('span', { key: 'u', style: MUTED2 }, '入 ' + fmtTokens(r.uncachedInput)),
                     el('span', { key: 'c', style: MUTED2 }, '命中 ' + fmtTokens(r.cacheRead)),
                     el('span', { key: 'o', style: MUTED2 }, '出 ' + fmtTokens(r.output)),
-                    el('span', { key: 'co', style: { color: ACCENT } }, fmtMoney(r.costCny, props.cnyPerUsd)),
+                    el('span', { key: 'co', style: { color: ACCENT } }, fmtMoney(r.costCny)),
                   ])
                 })),
               pages > 1 ? el('div', { key: 'pg', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' } }, [
                 el('button', { key: 'prev', type: 'button', style: PAGE_BTN, disabled: cur <= 1, onClick: function () { setPage(cur - 1) } }, '上一页'),
-                el('span', { key: 'info', style: MUTED2 }, '第 ' + cur + ' / ' + pages + ' 页 · 共 ' + rounds.length + ' 轮'),
+                el('span', { key: 'info', style: MUTED2 }, '第 ' + cur + ' / ' + pages + ' 页 · 共 ' + descRounds.length + ' 轮'),
                 el('button', { key: 'next', type: 'button', style: PAGE_BTN, disabled: cur >= pages, onClick: function () { setPage(cur + 1) } }, '下一页'),
               ]) : null,
             ],
@@ -307,6 +621,7 @@ window.__ModuleLoader__.load({
         fetchJson(sessionUrl('/dsh-usage/session', props.sessionId)).then(function (d) { setData(d) })
       }
       useEffect(function () { load() }, [props.sessionId])
+      useEffect(function () { if (props.refreshTick > 0) load() }, [props.refreshTick])
       useEffect(function () { setHover(-1) }, [props.sessionId, view])
       var d = data && !data.noSession ? data : null
       var rounds = (d && d.rounds) || []
@@ -383,7 +698,7 @@ window.__ModuleLoader__.load({
         setHover(idx)
       }
       var cell = hover >= 0 ? hours[hover] : null
-      var yAxisLabel = view === 'cost' ? 'USD' : 'tokens'
+      var yAxisLabel = view === 'cost' ? 'CNY' : 'tokens'
 
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } }, [
         el('div', { key: 'lg', style: { display: 'flex', gap: '10px', fontSize: '11px', alignItems: 'center', color: 'var(--dsw-alias-label-secondary, #4b5563)' } }, [
@@ -450,11 +765,11 @@ window.__ModuleLoader__.load({
                 el('div', { key: 'i', style: { color: lineStyle('uncachedInput').color } }, '输入(未命中) ' + fmtTokens(cell.uncachedInput)),
                 el('div', { key: 'c', style: { color: lineStyle('cacheRead').color } }, '命中 ' + fmtTokens(cell.cacheRead)),
                 el('div', { key: 'o', style: { color: lineStyle('output').color } }, '输出 ' + fmtTokens(cell.output)),
-                el('div', { key: 'co', style: { color: lineStyle('costCny').color } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
+                el('div', { key: 'co', style: { color: lineStyle('costCny').color } }, '成本(估算) ' + fmtMoney(cell.costCny)),
               ]
             : [
                 el('div', { key: 'dt', style: { fontWeight: 600 } }, cell.label),
-                el('div', { key: 'co', style: { color: lineStyle('costCny').color } }, '成本(估算) ' + fmtMoney(cell.costCny, props.cnyPerUsd)),
+                el('div', { key: 'co', style: { color: lineStyle('costCny').color } }, '成本(估算) ' + fmtMoney(cell.costCny)),
               ]) : null,
         ]),
       ])
@@ -468,6 +783,7 @@ window.__ModuleLoader__.load({
         fetchJson(sessionUrl('/dsh-usage/session', props.sessionId)).then(function (d) { setData(d) })
       }
       useEffect(function () { load() }, [props.sessionId])
+      useEffect(function () { if (props.refreshTick > 0) load() }, [props.refreshTick])
       var d = data && !data.noSession ? data : null
       var rounds = (d && d.rounds) || []
 
@@ -601,13 +917,13 @@ window.__ModuleLoader__.load({
       var s = String(v == null ? '' : v)
       return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
     }
-    function downloadCsv(rows, cnyPerUsd) {
+    function downloadCsv(rows) {
       if (!rows || !rows.length) return
-      var head = ['时间', '会话', '模型', '输入', '命中', '输出', '成本USD(估算)']
+      var head = ['时间', '会话', '模型', '输入', '命中', '输出', '成本CNY(估算)']
       var lines = [head.join(',')].concat(rows.map(function (r) {
         var d = r.time ? new Date(r.time) : null
         var t = d ? String(d.getFullYear()) + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') : ''
-        return [t, r.sessionId || '', r.model || '', r.uncachedInput || 0, r.cacheRead || 0, r.output || 0, fmtMoney(r.costCny || 0, cnyPerUsd)].map(csvEscape).join(',')
+        return [t, r.sessionId || '', r.model || '', r.uncachedInput || 0, r.cacheRead || 0, r.output || 0, fmtMoney(r.costCny || 0)].map(csvEscape).join(',')
       }))
       try {
         var blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
@@ -627,11 +943,14 @@ window.__ModuleLoader__.load({
         fetchJson(sessionUrl('/dsh-usage/history', props.sessionId)).then(function (d) { setData(d) })
       }
       useEffect(function () { load() }, [props.sessionId])
+      useEffect(function () { if (props.refreshTick > 0) load() }, [props.refreshTick])
       useEffect(function () { setPage(1) }, [props.sessionId])
       var rows = (data && data.rows) || []
-      var pages = Math.max(1, Math.ceil(rows.length / HISTORY_PAGE))
+      // 倒序：最新在前
+      var descRows = rows.slice().reverse()
+      var pages = Math.max(1, Math.ceil(descRows.length / HISTORY_PAGE))
       var cur = Math.min(page, pages)
-      var pageRows = rows.slice((cur - 1) * HISTORY_PAGE, cur * HISTORY_PAGE)
+      var pageRows = descRows.slice((cur - 1) * HISTORY_PAGE, cur * HISTORY_PAGE)
       function timeOf(t) {
         if (!t) return '—'
         var d = new Date(t)
@@ -640,11 +959,11 @@ window.__ModuleLoader__.load({
       return el('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } }, [
         el('div', { key: 'hd', style: { display: 'flex', alignItems: 'center', gap: '8px', width: '100%' } }, [
           el('span', { key: 't', style: { fontWeight: 600, fontSize: '13px', color: INK, flex: '1 1 auto' } }, '历史明细'),
-          el('span', { key: 'n', style: MUTED2 }, rows.length + ' 轮' + ((data && data.note) ? ' · ' + data.note : '')),
-          el('button', { key: 'csv', type: 'button', style: BTN, disabled: !rows.length, onClick: function () { downloadCsv(rows, props.cnyPerUsd) } }, '导出 CSV'),
+          el('span', { key: 'n', style: MUTED2 }, descRows.length + ' 轮' + ((data && data.note) ? ' · ' + data.note : '')),
+          el('button', { key: 'csv', type: 'button', style: BTN, disabled: !descRows.length, onClick: function () { downloadCsv(rows) } }, '导出 CSV'),
           el('button', { key: 'r', type: 'button', style: BTN, onClick: load }, '刷新'),
         ]),
-        rows.length === 0 ? el('div', { key: 'e', style: MUTED }, '暂无历史数据。')
+        descRows.length === 0 ? el('div', { key: 'e', style: MUTED }, '暂无历史数据。')
           : [
               el('div', { key: 'tbl', style: { maxHeight: '280px', overflowY: 'auto', border: '1px solid var(--dsw-alias-border-default, #e5e7eb)', borderRadius: '8px' } },
                 el('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } }, [
@@ -662,13 +981,13 @@ window.__ModuleLoader__.load({
                       el('td', { key: 'u', style: { padding: '3px 8px' } }, fmtTokens(r.uncachedInput)),
                       el('td', { key: 'c', style: { padding: '3px 8px' } }, fmtTokens(r.cacheRead)),
                       el('td', { key: 'o', style: { padding: '3px 8px' } }, fmtTokens(r.output)),
-                      el('td', { key: 'co', style: { padding: '3px 8px' } }, fmtMoney(r.costCny, props.cnyPerUsd)),
+                      el('td', { key: 'co', style: { padding: '3px 8px' } }, fmtMoney(r.costCny)),
                     ])
                   })),
                 ])),
               pages > 1 ? el('div', { key: 'pg', style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' } }, [
                 el('button', { key: 'prev', type: 'button', style: PAGE_BTN, disabled: cur <= 1, onClick: function () { setPage(cur - 1) } }, '上一页'),
-                el('span', { key: 'info', style: MUTED2 }, '第 ' + cur + ' / ' + pages + ' 页 · 共 ' + rows.length + ' 行'),
+                el('span', { key: 'info', style: MUTED2 }, '第 ' + cur + ' / ' + pages + ' 页 · 共 ' + descRows.length + ' 行'),
                 el('button', { key: 'next', type: 'button', style: PAGE_BTN, disabled: cur >= pages, onClick: function () { setPage(cur + 1) } }, '下一页'),
               ]) : null,
             ],
@@ -678,22 +997,37 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------- panel
 
     function UsagePanel(props) {
-      var [cnyPerUsd, setCnyPerUsd] = useState(6.76)
       var [sessionId, setSessionId] = useState(null)   // null = 全部会话
       var [sessionList, setSessionList] = useState([])
+      var [providers, setProviders] = useState([])
+      var [refreshSeconds, setRefreshSeconds] = useState(300)
+      var [refreshTick, setRefreshTick] = useState(0)
+      var [settingsOpen, setSettingsOpen] = useState(false)
 
-      useEffect(function () {
-        fetchJson('/dsh-usage/pricing').then(function (p) {
-          if (p && p.cnyPerUsd) setCnyPerUsd(p.cnyPerUsd)
+      // 加载配置（第三方供应商列表 + 自动刷新间隔）
+      function loadConfig() {
+        fetchJson('/dsh-usage/config').then(function (d) {
+          if (!d) return
+          setProviders(d.providers || [])
+          if (typeof d.refreshSeconds === 'number' && d.refreshSeconds >= 0) setRefreshSeconds(d.refreshSeconds)
         })
-      }, [])
+      }
+      useEffect(function () { loadConfig() }, [])
+      // 自动刷新：按 refreshSeconds 定时触发 tick（0 = 关闭）
+      useEffect(function () {
+        if (!(refreshSeconds > 0)) return
+        var t = setInterval(function () { setRefreshTick(function (n) { return n + 1 }) }, refreshSeconds * 1000)
+        return function () { clearInterval(t) }
+      }, [refreshSeconds])
+
       useEffect(function () {
         fetchJson('/dsh-usage/sessions').then(function (d) {
           if (d && d.ok) setSessionList(d.sessions || [])
         })
-      }, [])
+      }, [refreshTick])
 
-      var tabProps = { cnyPerUsd: cnyPerUsd, sessionId: sessionId, sessionList: sessionList, onSessionChange: setSessionId }
+      var tabProps = { sessionId: sessionId, sessionList: sessionList, onSessionChange: setSessionId, refreshTick: refreshTick }
+      var refreshProps = { providers: providers, refreshTick: refreshTick }
 
       return el('div', {
         style: {
@@ -710,21 +1044,26 @@ window.__ModuleLoader__.load({
           el(UsageGlyph, { key: 'g', size: 18 }),
           el('div', { key: 't', style: { flex: '1 1 auto', minWidth: '0' } }, [
             el('div', { key: 't1', style: { fontWeight: 600, fontSize: '14px' } }, '用量'),
-            el('div', { key: 't2', style: MUTED2 }, '成本为估算值 · USD'),
+            el('div', { key: 't2', style: MUTED2 }, '成本为估算值 · CNY' + (refreshSeconds > 0 ? ' · 自动刷新 ' + refreshSeconds + 's' : '')),
           ]),
+          el('button', { key: 'set', type: 'button', title: '设置', onClick: function () { setSettingsOpen(true) }, style: Object.assign({}, BTN, { minWidth: '28px', padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }) },
+            el(Glyph, { paths: SETTINGS_PATHS, viewBox: '0 0 24 24', size: 15 })),
           el('button', { key: 'x', type: 'button', onClick: props.onClose, style: Object.assign({}, BTN, { minWidth: '28px', padding: '0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }) },
             el(Glyph, { paths: CLOSE_PATHS, viewBox: '0 0 24 24', size: 14 })),
         ]),
         // 单页卡片流：内容列居中（margin auto）并撑满合理宽度
+        // 顺序：余额 → 预算 → 曲线 → 热力图 → 用量 → 历史
         el('div', { key: 'body', style: { flex: '1 1 auto', minHeight: '0', overflowY: 'auto', padding: '16px 20px' } }, [
           el('div', { key: 'col', style: { width: '100%', maxWidth: '640px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '14px' } }, [
-            el(Card, { key: 'bal' }, el(BalanceTab, { key: 'b' })),
-            el(Card, { key: 'use' }, el(UsageTab, { key: 'u', ...tabProps })),
+            el(Card, { key: 'bal' }, el(BalanceTab, { key: 'b', ...refreshProps })),
+            el(Card, { key: 'budget', title: '预算' }, el(BudgetCard, { key: 'bd', ...refreshProps, onOpenSettings: function () { setSettingsOpen(true) } })),
             el(Card, { key: 'chart', title: 'token 折线图（仅当天）' }, el(ChartTab, { key: 'c', ...tabProps })),
             el(Card, { key: 'heat', title: 'token 热力图（最近 13 周）' }, el(HeatTab, { key: 'h', ...tabProps })),
+            el(Card, { key: 'use' }, el(UsageTab, { key: 'u', ...tabProps })),
             el(Card, { key: 'hist' }, el(HistoryTab, { key: 'r', ...tabProps })),
           ]),
         ]),
+        settingsOpen ? el(SettingsModal, { key: 'modal', onClose: function () { setSettingsOpen(false) }, onSaved: function () { loadConfig() } }) : null,
       ])
     }
 

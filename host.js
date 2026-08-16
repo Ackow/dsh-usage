@@ -21,12 +21,29 @@ export const name = 'dshd-usage'
 /** 服务依赖：webServer（路由载体）；sessions / credentials 按需 ctx.get。 */
 export const inject = ['webServer']
 
+import fs from 'node:fs'
+import path from 'node:path'
+
 const PUBLIC_BASE_URL = 'https://api.deepseek.com'
 const DEFAULT_API_KEY_ENV = 'DEEPSEEK_API_KEY'
 const OPENROUTER_API_KEY_ENV = 'OPENROUTER_API_KEY'
 const CNY_PER_USD_DEFAULT = 6.76
 const BEIJING_OFFSET_MINUTES = 480
 const DEFAULT_PEAK_WINDOWS = [[9, 12], [14, 18]]
+
+/** 是否为同一天（按北京时间）。 */
+function sameDay(aMs, bMs) {
+  const d = (ms) => new Date(ms + BEIJING_OFFSET_MINUTES * 60000)
+  const x = d(aMs), y = d(bMs)
+  return x.getUTCFullYear() === y.getUTCFullYear() && x.getUTCMonth() === y.getUTCMonth() && x.getUTCDate() === y.getUTCDate()
+}
+
+/** 是否为同一月（按北京时间）。 */
+function sameMonth(aMs, bMs) {
+  const d = (ms) => new Date(ms + BEIJING_OFFSET_MINUTES * 60000)
+  const x = d(aMs), y = d(bMs)
+  return x.getUTCFullYear() === y.getUTCFullYear() && x.getUTCMonth() === y.getUTCMonth()
+}
 const PRICE_SYNC_URL = 'https://api-docs.deepseek.com/zh-cn/quick_start/pricing/'
 
 /**
@@ -66,6 +83,13 @@ const DEFAULT_CONFIG = {
   baseUrl: PUBLIC_BASE_URL,
   cnyPerUsd: CNY_PER_USD_DEFAULT,
   allowRemote: false,
+  // 第三方自定义供应商（余额检测）：[{ id, type: newapi|sub2api|generic,
+  //   baseUrl, apiKeyEnv, balancePath, balanceField, currency, unit }]
+  providers: [],
+  // 预算：{ enabled, limitCny, period: daily|monthly|cumulative }
+  budget: { enabled: false, limitCny: 0, period: 'monthly' },
+  // 自动刷新间隔（秒），0 = 关闭
+  refreshSeconds: 300,
 }
 
 export function mergeConfig(config) {
@@ -76,6 +100,29 @@ export function mergeConfig(config) {
     pricing[model] = { ...entry } // 用户覆盖：可带 schedules
   }
   const cnyPerUsd = Number(raw.cnyPerUsd) > 0 ? Number(raw.cnyPerUsd) : CNY_PER_USD_DEFAULT
+  // 第三方供应商：白名单字段，防注入
+  const providers = Array.isArray(raw.providers)
+    ? raw.providers
+        .filter((p) => p && typeof p === 'object' && typeof p.id === 'string' && p.id)
+        .map((p) => ({
+          id: String(p.id).trim(),
+          type: String(p.type || 'generic').toLowerCase(),
+          baseUrl: String(p.baseUrl || '').trim(),
+          apiKeyEnv: String(p.apiKeyEnv || DEFAULT_API_KEY_ENV).trim(),
+          balancePath: String(p.balancePath || '').trim(),
+          balanceField: String(p.balanceField || '').trim(),
+          currency: String(p.currency || 'CNY').trim(),
+          unit: Number(p.unit) > 0 ? Number(p.unit) : 1,
+          label: String(p.label || p.id || '').trim(),
+        }))
+    : []
+  const budgetRaw = (raw.budget && typeof raw.budget === 'object') ? raw.budget : {}
+  const budget = {
+    enabled: budgetRaw.enabled === true,
+    limitCny: Number(budgetRaw.limitCny) > 0 ? Number(budgetRaw.limitCny) : 0,
+    period: ['daily', 'monthly', 'cumulative'].includes(budgetRaw.period) ? budgetRaw.period : 'monthly',
+  }
+  const refreshSeconds = Number(raw.refreshSeconds) >= 0 ? Number(raw.refreshSeconds) : 300
   return {
     apiKeyEnv: typeof raw.apiKeyEnv === 'string' && raw.apiKeyEnv ? raw.apiKeyEnv : DEFAULT_API_KEY_ENV,
     openrouterApiKeyEnv: typeof raw.openrouterApiKeyEnv === 'string' && raw.openrouterApiKeyEnv ? raw.openrouterApiKeyEnv : OPENROUTER_API_KEY_ENV,
@@ -83,6 +130,9 @@ export function mergeConfig(config) {
     cnyPerUsd,
     allowRemote: raw.allowRemote === true,
     pricing,
+    providers,
+    budget,
+    refreshSeconds,
   }
 }
 
@@ -346,6 +396,26 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
+/** 读取请求体（JSON，限 1MB）。返回解析后的对象；失败返回 null。 */
+function readBody(req) {
+  return new Promise((resolve) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > 1024 * 1024) { resolve(null); req.destroy(); return }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(chunks).toString('utf8')
+        resolve(text ? JSON.parse(text) : null)
+      } catch { resolve(null) }
+    })
+    req.on('error', () => resolve(null))
+  })
+}
+
 async function resolveApiKey(ctx, config, ref) {
   const credentials = ctx.get?.('credentials')
   if (credentials && typeof credentials.resolve === 'function') {
@@ -414,8 +484,102 @@ async function fetchOpenrouterBalance(ctx, config) {
   }
 }
 
+/** 通用余额适配器：GET url，Authorization 头，从 JSON 按路径取余额。
+ *  balanceField 支持点路径（balanceInfos.0.totalBalance）或 JSON Pointer（/balance_infos/0/total_balance）；
+ *  可选 unit 换算（如 1e6 把"每百万"换算为原始值）。 */
+async function fetchGenericBalance(ctx, config, spec) {
+  const apiKey = await resolveApiKey(ctx, config, spec.apiKeyEnv || DEFAULT_API_KEY_ENV)
+  if (!apiKey) {
+    throw new Error(`未配置 API Key（凭据引用 ${spec.apiKeyEnv || DEFAULT_API_KEY_ENV} 或同名环境变量）。`)
+  }
+  const base = String(spec.baseUrl || config.baseUrl || PUBLIC_BASE_URL).replace(/\/+$/, '')
+  const path = String(spec.balancePath || '/user/balance')
+  const raw = await fetchWithTimeout(base + path, {
+    headers: { authorization: `Bearer ${apiKey}`, ...(spec.extraHeaders || {}) },
+  })
+  const field = spec.balanceField || 'balanceInfos.0.totalBalance'
+  let node = raw
+  const parts = field.replace(/^\//, '').split('/')
+  for (const p of parts) {
+    if (node == null) break
+    node = node[p.replace(/~1/g, '/').replace(/~0/g, '~')]
+  }
+  const rawVal = node
+  const unit = Number(spec.unit) > 0 ? Number(spec.unit) : 1
+  const value = typeof rawVal === 'number' ? rawVal / unit
+    : typeof rawVal === 'string' && rawVal.trim() !== '' ? Number(rawVal) / unit : null
+  return {
+    provider: spec.id || 'generic',
+    isAvailable: value != null,
+    infos: [{
+      currency: spec.currency || 'CNY',
+      totalBalance: value,
+      grantedBalance: null,
+      toppedUpBalance: null,
+    }],
+  }
+}
+
+/** New API / one-api 系（/user/balance，DeepSeek 兼容结构）。 */
+async function fetchNewApiBalance(ctx, config, spec) {
+  const apiKey = await resolveApiKey(ctx, config, spec.apiKeyEnv || 'NEW_API_KEY')
+  if (!apiKey) {
+    throw new Error(`未配置 API Key（凭据引用 ${spec.apiKeyEnv || 'NEW_API_KEY'} 或同名环境变量）。`)
+  }
+  const base = String(spec.baseUrl || config.baseUrl || PUBLIC_BASE_URL).replace(/\/+$/, '')
+  const raw = await fetchWithTimeout(base + (spec.balancePath || '/user/balance'), {
+    headers: { authorization: `Bearer ${apiKey}` },
+  })
+  return {
+    provider: spec.id || 'newapi',
+    isAvailable: raw?.is_available === true,
+    infos: (raw?.balance_infos ?? []).map((info) => ({
+      currency: info.currency,
+      totalBalance: info.total_balance,
+      grantedBalance: info.granted_balance,
+      toppedUpBalance: info.topped_up_balance,
+    })),
+  }
+}
+
+/** Sub2API 系（/api/balance 返回 { data: { balance, credit } }）。 */
+async function fetchSub2ApiBalance(ctx, config, spec) {
+  const apiKey = await resolveApiKey(ctx, config, spec.apiKeyEnv || 'SUB2API_KEY')
+  if (!apiKey) {
+    throw new Error(`未配置 API Key（凭据引用 ${spec.apiKeyEnv || 'SUB2API_KEY'} 或同名环境变量）。`)
+  }
+  const base = String(spec.baseUrl || '').replace(/\/+$/, '')
+  if (!base) throw new Error('Sub2API 需要 baseUrl（如 https://api.sub2api.com）')
+  const raw = await fetchWithTimeout(base + (spec.balancePath || '/api/balance'), {
+    headers: { authorization: `Bearer ${apiKey}` },
+  })
+  const data = raw?.data || {}
+  return {
+    provider: spec.id || 'sub2api',
+    isAvailable: true,
+    infos: [{
+      currency: 'CNY',
+      totalBalance: data.balance ?? data.credit ?? null,
+      grantedBalance: null,
+      toppedUpBalance: null,
+    }],
+  }
+}
+
+/** 第三方自定义供应商：按配置的 type 分派（newapi/sub2api/generic）。 */
+async function fetchThirdPartyBalance(ctx, config, spec) {
+  const type = String(spec.type || 'generic').toLowerCase()
+  if (type === 'newapi' || type === 'one-api' || type === 'oneapi') return fetchNewApiBalance(ctx, config, spec)
+  if (type === 'sub2api') return fetchSub2ApiBalance(ctx, config, spec)
+  return fetchGenericBalance(ctx, config, spec)
+}
+
 async function fetchProviderBalance(ctx, config, provider) {
   if (provider === 'openrouter') return fetchOpenrouterBalance(ctx, config)
+  // 第三方自定义供应商（config.providers 数组，按 id 匹配）
+  for (const spec of config.providers || []) {
+    if (spec && spec.id === provider) return fetchThirdPartyBalance(ctx, config, spec)
+  }
   return fetchDeepseekBalance(ctx, config)
 }
 
@@ -429,6 +593,60 @@ export function apply(ctx, config) {
   if (!webServer || typeof webServer.register !== 'function') {
     warn('webServer 服务不可用，用量路由未注册')
     return
+  }
+
+  // ---- 用户配置持久化（单价/预算/第三方供应商/刷新间隔） ----
+  // 存到插件目录 config.json（用 import.meta.url 定位插件目录，不依赖
+  // DSH_HOME 环境变量——dsh web 进程不一定导出它）；用户通过「设置」弹窗读写。
+  const CONFIG_FILE = (() => {
+    try {
+      const here = new URL(import.meta.url)
+      // file:///.../node_modules/@dshd/dsh-usage/host.js
+      let dir = decodeURIComponent(here.pathname.replace(/host\.js$/, ''))
+      if (process.platform === 'win32') {
+        // /C:/... → C:/...
+        dir = dir.replace(/^\//, '')
+      } else if (!dir.startsWith('/')) {
+        dir = '/' + dir
+      }
+      return dir + 'config.json'
+    } catch (e) {
+      warn('插件目录解析失败：' + (e?.message || e))
+      return null
+    }
+  })()
+  function loadUserConfig() {
+    try {
+      if (!CONFIG_FILE) return null
+      if (fs.existsSync(CONFIG_FILE)) return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+    } catch (e) { warn('用户配置读取失败：' + (e?.message || e)) }
+    return null
+  }
+  function saveUserConfig(obj) {
+    try {
+      if (!CONFIG_FILE) return false
+      fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true })
+      fs.writeFileSync(CONFIG_FILE, JSON.stringify(obj, null, 2), 'utf8')
+      return true
+    } catch (e) { warn('用户配置保存失败：' + (e?.message || e)); return false }
+  }
+  // 合并：dsh 传入 config 为基础，用户持久化配置覆盖（pricing 深合并）
+  const userCfg = loadUserConfig()
+  if (userCfg) {
+    if (userCfg.pricing && typeof userCfg.pricing === 'object') {
+      for (const [m, e] of Object.entries(userCfg.pricing)) cfg.pricing[m] = { ...cfg.pricing[m], ...e }
+    }
+    if (typeof userCfg.cnyPerUsd === 'number' && userCfg.cnyPerUsd > 0) cfg.cnyPerUsd = userCfg.cnyPerUsd
+    if (Array.isArray(userCfg.providers)) cfg.providers = userCfg.providers
+    if (userCfg.budget && typeof userCfg.budget === 'object') {
+      cfg.budget = {
+        enabled: userCfg.budget.enabled === true,
+        limitCny: Number(userCfg.budget.limitCny) > 0 ? Number(userCfg.budget.limitCny) : 0,
+        period: ['daily', 'monthly', 'cumulative'].includes(userCfg.budget.period) ? userCfg.budget.period : 'monthly',
+      }
+    }
+    if (typeof userCfg.refreshSeconds === 'number' && userCfg.refreshSeconds >= 0) cfg.refreshSeconds = userCfg.refreshSeconds
+    warn('已加载用户配置（' + Object.keys(userCfg).join(',') + '）')
   }
 
   // ---- 持久化会话访问（sessionPersistence 服务，可选） ----
@@ -566,6 +784,119 @@ export function apply(ctx, config) {
       },
     })
   } catch (error) { warn('balance 路由注册失败：' + error) }
+
+  // ---- 配置读写：GET 返回当前配置（pricing/cnyPerUsd/budget/providers/refreshSeconds），
+  //      POST 保存用户覆盖（写 config.json 并立即生效） ----
+  try {
+    webServer.register({
+      kind: 'exact',
+      path: '/dsh-usage/config',
+      handler: async (req, res) => {
+        if (!cfg.allowRemote && !isLoopbackRequest(req)) {
+          sendJson(res, 403, { ok: false, code: 'FORBIDDEN', message: '配置读写仅允许从本机访问' })
+          return
+        }
+        if (req.method === 'POST') {
+          const body = await readBody(req)
+          if (!body || typeof body !== 'object') {
+            sendJson(res, 400, { ok: false, message: '配置体必须是 JSON 对象' })
+            return
+          }
+          const next = { ...(loadUserConfig() || {}) }
+          // 白名单字段
+          if (body.pricing && typeof body.pricing === 'object') next.pricing = body.pricing
+          if (typeof body.cnyPerUsd === 'number' && body.cnyPerUsd > 0) next.cnyPerUsd = body.cnyPerUsd
+          if (Array.isArray(body.providers)) next.providers = body.providers
+          if (body.budget && typeof body.budget === 'object') {
+            next.budget = {
+              enabled: body.budget.enabled === true,
+              limitCny: Number(body.budget.limitCny) > 0 ? Number(body.budget.limitCny) : 0,
+              period: ['daily', 'monthly', 'cumulative'].includes(body.budget.period) ? body.budget.period : 'monthly',
+            }
+          }
+          if (typeof body.refreshSeconds === 'number' && body.refreshSeconds >= 0) next.refreshSeconds = body.refreshSeconds
+          if (!saveUserConfig(next)) {
+            sendJson(res, 500, { ok: false, message: '配置保存失败' })
+            return
+          }
+          // 立即生效：重算 cfg
+          const fresh = mergeConfig(config)
+          if (next.pricing) for (const [m, e] of Object.entries(next.pricing)) fresh.pricing[m] = { ...fresh.pricing[m], ...e }
+          if (typeof next.cnyPerUsd === 'number' && next.cnyPerUsd > 0) fresh.cnyPerUsd = next.cnyPerUsd
+          if (Array.isArray(next.providers)) fresh.providers = next.providers
+          if (next.budget) fresh.budget = { ...fresh.budget, ...next.budget }
+          if (typeof next.refreshSeconds === 'number') fresh.refreshSeconds = next.refreshSeconds
+          Object.assign(cfg, fresh)
+          if (next.pricing) current.pricing = { ...current.pricing, ...fresh.pricing }
+          warn('用户配置已保存并生效')
+          sendJson(res, 200, { ok: true })
+          return
+        }
+        // GET：返回面板可编辑的配置
+        const rows = {}
+        for (const [model, rate] of Object.entries(cfg.pricing)) {
+          rows[model] = { cacheHit: rate.cacheHit, cacheMiss: rate.cacheMiss, output: rate.output, schedules: rate.schedules ?? [] }
+        }
+        sendJson(res, 200, {
+          ok: true,
+          cnyPerUsd: cfg.cnyPerUsd,
+          pricing: rows,
+          budget: cfg.budget,
+          providers: cfg.providers,
+          refreshSeconds: cfg.refreshSeconds,
+          currency: 'cny',
+          estimated: true,
+        })
+      },
+    })
+  } catch (error) { warn('config 路由注册失败：' + error) }
+
+  // ---- 预算状态：已用成本（按周期汇总）/ 额度 / 百分比 / 预警 ----
+  try {
+    webServer.register({
+      kind: 'exact',
+      path: '/dsh-usage/budget',
+      handler: async (req, res) => {
+        if (!cfg.allowRemote && !isLoopbackRequest(req)) {
+          sendJson(res, 403, { ok: false, code: 'FORBIDDEN', message: '预算查询仅允许从本机访问' })
+          return
+        }
+        const budget = cfg.budget || { enabled: false, limitCny: 0, period: 'monthly' }
+        if (!budget.enabled || budget.limitCny <= 0) {
+          sendJson(res, 200, { ok: true, enabled: false })
+          return
+        }
+        let targets = []
+        try { targets = await allSessions() } catch { targets = [] }
+        const now = Date.now()
+        let spentCny = 0
+        const period = budget.period || 'monthly'
+        for (const s of targets) {
+          const folded = foldUsage(collectUsage(s), cfg, now, s.id, current.pricing)
+          for (const r of folded.rounds || []) {
+            const t = r.time ? new Date(r.time).getTime() : 0
+            if (period === 'daily' && sameDay(t, now)) spentCny += Number(r.costCny) || 0
+            else if (period === 'monthly' && sameMonth(t, now)) spentCny += Number(r.costCny) || 0
+            else if (period === 'cumulative') spentCny += Number(r.costCny) || 0
+          }
+        }
+        const limitCny = budget.limitCny
+        const pct = limitCny > 0 ? Math.min(999, (spentCny / limitCny) * 100) : 0
+        sendJson(res, 200, {
+          ok: true,
+          enabled: true,
+          period,
+          limitCny,
+          spentCny,
+          remainingCny: Math.max(0, limitCny - spentCny),
+          pct,
+          warn: pct >= 100,
+          alert: pct >= 80 && pct < 100,
+          currency: 'cny',
+        })
+      },
+    })
+  } catch (error) { warn('budget 路由注册失败：' + error) }
 
   // ---- 会话枚举（内存活跃 + 磁盘持久化，含标题，供 client 下拉选择） ----
   try {
